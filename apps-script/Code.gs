@@ -40,7 +40,7 @@ const WORK_DEFAULTS = {
 };
 const SITE_URL = 'https://cortadosnir-design.github.io/vanilla-greenhouses/';
 const SETTING_DEFAULTS = [
-  ['כתובת האתר', SITE_URL], ['קוד עובדים', '1234'], ['קוד מנהל', '9876'], ['עובדים', ''],
+  ['כתובת האתר', SITE_URL], ['קוד עובדים', ''], ['קוד מנהל', ''], ['עובדים', ''],
   ['מזהה תיקיית תמונות ב-Drive', ''], ['אימייל לעדכון יומי', ''],
   ['מזהה תיקיית גיבוי ב-Drive', ''], ['אימייל בעלים שני', ''], ['גיבוי אחרון', ''], ['ימים לשמירת גיבויים', 30],
 ];
@@ -97,7 +97,12 @@ function setup() {
   }
 
   const have = settings();
-  SETTING_DEFAULTS.forEach(function (d) { if (!(d[0] in have)) findSheet(SHEETS.settings).appendRow(d); });
+  SETTING_DEFAULTS.forEach(function (d) {
+    if (d[0] in have) return;
+    // a fresh install gets random codes, never a guessable default
+    const v = d[0] === SETTING.workerCode ? randomCode(10) : d[0] === SETTING.managerCode ? randomCode(14) : d[1];
+    findSheet(SHEETS.settings).appendRow([d[0], v]);
+  });
 
   const bc = findSheet(SHEETS.barcode);
   if (bc && bc.getLastRow() <= 1 && !String(bc.getRange(1, 1, 1, 1).getValue()).trim()) {
@@ -119,6 +124,7 @@ function doPost(e) {
     if (PropertiesService.getScriptProperties().getProperty('schema') !== SCHEMA_VERSION) setup();
     const role = roleFor(req.code);
     if (!role) return json({ ok: false, error: 'קוד שגוי' });
+    if (req.id != null && !/^[A-Z]-[a-z0-9]{1,24}$/.test(String(req.id))) return json({ ok: false, error: 'מזהה לא תקין' });
     if (MANAGER_ONLY.indexOf(req.action) >= 0 && role !== 'manager') return json({ ok: false, error: 'נדרש קוד מנהל' });
     const fn = ACTIONS[req.action];
     if (!fn) return json({ ok: false, error: 'פעולה לא מוכרת: ' + req.action });
@@ -168,13 +174,13 @@ const ACTIONS = {
       if (findBy(log, 'מזהה', req.id)) return { id: req.id, duplicate: true };
       const gh = greenhouse(req.gh);
       const work = workByCode(req.work);
-      const start = new Date(req.ts);
+      const start = when(req.ts);
       const row = appendObj(log, {
         'מזהה': req.id,
         'תאריך': dayOf(start),
         'עובד': text(req.worker),
         'חממה': gh ? gh.name : text(req.gh),
-        'קוד עבודה': work ? work.code : req.work,
+        'קוד עבודה': work ? work.code : text(req.work),
         'עבודה': work ? work.name : '',
         'קטגוריה': work ? work.category : '',
         'כניסה': start,
@@ -188,17 +194,15 @@ const ACTIONS = {
   },
 
   checkOut: function (req) {
-    const photo = savePhoto(req.photo, req.id); // Drive upload stays outside the lock
     return withLock(function () {
       const log = readTable(SHEETS.log);
       const hit = findBy(log, 'מזהה', req.id);
-      if (!hit) throw new Error('לא נמצאה כניסה פתוחה (' + req.id + ')');
+      if (!hit || isSpecial(hit)) throw new Error('לא נמצאה כניסה פתוחה (' + req.id + ')');
       if (hit['סטטוס'] === 'סגור') return { id: req.id, duplicate: true };
       setCells(log, hit._row, {
-        'יציאה': new Date(req.ts),
-        'כמות': req.qty === '' || req.qty == null || isNaN(Number(req.qty)) ? '' : Number(req.qty),
+        'יציאה': exitAfter(hit, req.ts),
+        'כמות': req.qty === '' || req.qty == null || !isFinite(Number(req.qty)) ? '' : Number(req.qty),
         'הערות': text(req.notes),
-        'תמונה': photo,
         'סטטוס': 'סגור',
         'עודכן': new Date(),
       });
@@ -210,7 +214,7 @@ const ACTIONS = {
     return withLock(function () {
       const t = readTable(SHEETS.log);
       if (findBy(t, 'מזהה', req.id)) return { id: req.id, duplicate: true };
-      const start = new Date(req.ts);
+      const start = when(req.ts);
       const row = appendObj(t, { 'מזהה': req.id, 'תאריך': dayOf(start), 'עובד': text(req.worker), 'עבודה': 'יום עבודה', 'קוד עבודה': KIND.shift, 'כניסה': start, 'סטטוס': 'פתוח' });
       formatLogRow(t, row);
       return { id: req.id };
@@ -221,9 +225,9 @@ const ACTIONS = {
     return withLock(function () {
       const t = readTable(SHEETS.log);
       const hit = findBy(t, 'מזהה', req.id);
-      if (!hit) throw new Error('לא נמצאה כניסה לעבודה (' + req.id + ')');
+      if (!hit || hit['קוד עבודה'] !== KIND.shift) throw new Error('לא נמצאה כניסה לעבודה (' + req.id + ')');
       if (hit['סטטוס'] === 'סגור') return { id: req.id, duplicate: true };
-      setCells(t, hit._row, { 'יציאה': new Date(req.ts), 'סטטוס': 'סגור' });
+      setCells(t, hit._row, { 'יציאה': exitAfter(hit, req.ts), 'סטטוס': 'סגור' });
       return { id: req.id };
     });
   },
@@ -234,19 +238,24 @@ const ACTIONS = {
       const t = readTable(SHEETS.log);
       if (findBy(t, 'מזהה', req.id)) return { id: req.id, duplicate: true };
       const gh = greenhouse(req.gh);
-      const row = appendObj(t, { 'מזהה': req.id, 'תאריך': new Date(req.date), 'עובד': text(req.by), 'חממה': gh ? gh.name : text(req.gh),
+      // the date is when the photos were uploaded
+      const row = appendObj(t, { 'מזהה': req.id, 'תאריך': new Date(), 'עובד': text(req.by), 'חממה': gh ? gh.name : text(req.gh),
         'עבודה': 'תמונות', 'קוד עבודה': KIND.photo, 'הערות': text(req.note), 'סטטוס': 'סגור' });
-      t.sh.getRange(row, col(t, 'תאריך')).setNumberFormat('dd/mm/yyyy');
+      t.sh.getRange(row, col(t, 'תאריך')).setNumberFormat('dd/mm/yyyy hh:mm');
       return { id: req.id };
     });
   },
 
   /** One photo per request (up to 20 per set), appended to the row's תמונה cell. */
   photo: function (req) {
-    const url = savePhoto(req.photo, req.id + '-' + (req.idx || 0));
+    const set = findBy(readTable(SHEETS.log), 'מזהה', req.id);
+    if (!set) throw new Error('לא נמצאה רשומה (' + req.id + ')');
+    // file name in Drive: greenhouse, upload date and time, number in the set
+    const when = isDate(set['תאריך']) ? set['תאריך'] : new Date();
+    const name = (set['חממה'] || 'תמונה') + ' ' + Utilities.formatDate(when, Session.getScriptTimeZone(), 'yyyy-MM-dd HH-mm') + ' (' + ((Number(req.idx) || 0) + 1) + ')';
+    const url = savePhoto(req.photo, name);
     if (!url) throw new Error('תמונה לא תקינה');
     return withLock(function () {
-      const kind = String(req.id).charAt(0);
       const t = readTable(SHEETS.log);
       const hit = findBy(t, 'מזהה', req.id);
       if (!hit) throw new Error('לא נמצאה רשומה (' + req.id + ')');
@@ -257,14 +266,13 @@ const ACTIONS = {
   },
 
   issue: function (req) {
-    const photo = savePhoto(req.photo, req.id);
     return withLock(function () {
       const t = readTable(SHEETS.log);
       if (findBy(t, 'מזהה', req.id)) return { id: req.id, duplicate: true };
       const gh = greenhouse(req.gh);
       const row = appendObj(t, {
         'מזהה': req.id,
-        'תאריך': new Date(req.ts),
+        'תאריך': when(req.ts),
         'חממה': gh ? gh.name : text(req.gh),
         'עובד': text(req.worker),
         'עבודה': 'דיווח בעיה',
@@ -272,7 +280,6 @@ const ACTIONS = {
         'פירוט': text(req.category),
         'חומרה': text(req.severity),
         'הערות': text(req.desc),
-        'תמונה': photo,
         'סטטוס': 'פתוח',
       });
       t.sh.getRange(row, col(t, 'תאריך')).setNumberFormat('dd/mm/yyyy');
@@ -324,7 +331,9 @@ const ACTIONS = {
     const title = 'דוח חממות וניל ' + fmt(from.getTime() ? from : firstDate(log)) + ' - ' + fmt(to);
     const book = SpreadsheetApp.create(title);
     moveNextToMain(book);
-    try { DriveApp.getFileById(book.getId()).setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { /* domain policy */ }
+    // hours per worker stay private: only the second owner is added, never "anyone with the link"
+    const second = (settings()[SETTING.secondOwner] || {}).value;
+    if (second) try { DriveApp.getFileById(book.getId()).addViewer(second); } catch (e) { /* bad address */ }
 
     const summary = book.getSheets()[0].setName('סיכום');
     const sumRows = ghs.map(function (g) {
@@ -539,29 +548,75 @@ function settings() {
   return m;
 }
 
+// The codes never stay readable in the sheet: a code typed into the Code tab is turned into a salted SHA-256 hash
+// in Script Properties and the cell is masked. To change a code, type the new one over the mask.
+const CODE_MASK = '•••••• (שמור מוצפן. להחלפה כותבים כאן קוד חדש)';
+const CODE_PROPS = [['managerCode', 'managerHash', 'manager'], ['workerCode', 'workerHash', 'worker']];
+
+function hashCode(c) {
+  const props = PropertiesService.getScriptProperties();
+  let salt = props.getProperty('codeSalt');
+  if (!salt) { salt = Utilities.getUuid(); props.setProperty('codeSalt', salt); }
+  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + '|' + c, Utilities.Charset.UTF_8));
+}
+
+const CODE_SHORT = 'קוד קצר מדי, הקוד הקודם נשאר. כותבים כאן לפחות 8 אותיות ומספרים';
+function absorbCodes(s) {
+  const props = PropertiesService.getScriptProperties();
+  CODE_PROPS.forEach(function (p) {
+    const e = s[SETTING[p[0]]];
+    const v = e && String(e.value || '').trim();
+    if (!v || v === CODE_MASK || v === CODE_SHORT) return;
+    const ok = v.length >= 8;
+    if (ok) props.setProperty(p[1], hashCode(v));
+    findSheet(SHEETS.settings).getRange(e.row, 2).setValue(ok ? CODE_MASK : CODE_SHORT);
+  });
+}
+
+function randomCode(n) {
+  return Utilities.getUuid().replace(/-/g, '').slice(0, n).toUpperCase();
+}
+
 function roleFor(code) {
   if (code == null || String(code).trim() === '') return null;
-  const cache = CacheService.getScriptCache();
-  if (Number(cache.get('badCodes') || 0) >= 20) throw new Error('יותר מדי ניסיונות. נסו שוב בעוד כמה דקות');
-  const s = settings();
-  const c = String(code).trim();
-  if (s[SETTING.managerCode] && c === s[SETTING.managerCode].value) return 'manager';
-  if (s[SETTING.workerCode] && c === s[SETTING.workerCode].value) return 'worker';
-  cache.put('badCodes', String(Number(cache.get('badCodes') || 0) + 1), 600);
+  // No lockout and no delay: a lockout lets anyone block the farm, and a delay helps flood the script.
+  // Codes of 8+ random characters are what make guessing hopeless.
+  absorbCodes(settings());
+  const props = PropertiesService.getScriptProperties();
+  const h = hashCode(String(code).trim());
+  for (let i = 0; i < CODE_PROPS.length; i++) if (props.getProperty(CODE_PROPS[i][1]) === h) return CODE_PROPS[i][2];
   return null;
 }
 
+/** A time sent by a phone. The offline queue may hold it a few days, but it is never in the future. */
+function when(ts) {
+  const d = new Date(Number(ts)), now = Date.now();
+  if (isNaN(d.getTime()) || d.getTime() > now + 5 * 60000 || d.getTime() < now - 7 * 86400000) throw new Error('זמן לא תקין');
+  return d;
+}
+
+/** Exit time: valid, and not before the entry. */
+function exitAfter(hit, ts) {
+  const d = when(ts);
+  if (isDate(hit['כניסה']) && hit['כניסה'].getTime() > d.getTime() + 60000) throw new Error('שעת יציאה לפני שעת כניסה');
+  return d;
+}
+
+/** Work days, problems and photo sets share Log data with work rows. */
+function isSpecial(r) { return [KIND.shift, KIND.issue, KIND.photo].indexOf(r['קוד עבודה']) >= 0; }
+
 /** Free text from the phone: never let a cell start with a formula character. */
 function text(v) {
-  const t = v == null ? '' : String(v).trim();
+  const t = v == null ? '' : String(v).trim().slice(0, 2000);
   return /^[=+\-@]/.test(t) ? "'" + t : t;
 }
 
 function savePhoto(dataUrl, name) {
   if (!dataUrl) return '';
-  const m = String(dataUrl).match(/^data:(image\/[\w+.-]+);base64,(.+)$/);
-  if (!m) return '';
-  const blob = Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], name + '.jpg');
+  // the site always sends a resized JPEG; anything else (SVG, huge files) is refused
+  const m = String(dataUrl).match(/^data:image\/jpeg;base64,([A-Za-z0-9+\/=]+)$/);
+  if (!m || m[1].length > 4000000) return '';
+  const blob = Utilities.newBlob(Utilities.base64Decode(m[1]), 'image/jpeg', name + '.jpg');
   const file = photoFolder().createFile(blob);
   try {
     // the dashboard shows thumbnails, which needs view-by-link
