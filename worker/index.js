@@ -370,6 +370,10 @@ const ACTION_TABS = {
   photo: ['log', 'settings'],
   issue: ['greenhouses', 'log', 'settings'],
   resolveIssue: ['log', 'settings'],
+  rowGet: ['log', 'settings'],
+  rowEdit: ['log', 'settings'],
+  rowDelete: ['log', 'settings'],
+  photoDelete: ['log', 'settings'],
   stamp: [],
 };
 
@@ -561,6 +565,23 @@ const isKind = (kind) => (r) => r['קוד עבודה'] === kind;
 const isSpecial = (r) => [KIND.shift, KIND.issue, KIND.photo].includes(r['קוד עבודה']);
 /** Log data rows that are work (and photo sets), without work-day and problem rows. */
 const workRows = (rows) => rows.filter((r) => r['קוד עבודה'] !== KIND.shift && r['קוד עבודה'] !== KIND.issue);
+// a deleted row stays in the sheet, marked, so nothing is lost; the app no longer counts or shows it
+const DELETED = 'נמחק';
+const alive = (r) => r['סטטוס'] !== DELETED;
+
+/** The row a phone may change: the manager any row, a worker only his own from the last week. */
+function editableRow(db, req, role) {
+  const hit = findBy(db.t.log, 'מזהה', req.id);
+  if (!hit || !alive(hit) || hit['קוד עבודה'] === KIND.shift) throw new Error('הרשומה לא נמצאה');
+  if (role !== 'manager') {
+    const p = plain(hit);
+    const at = typeof p['כניסה'] === 'number' ? p['כניסה'] : p['תאריך'];
+    if (String(hit['עובד']) !== String(req.worker) || !(at > Date.now() - 7 * DAY)) throw new Error('אפשר לשנות רק רשומות שלך מהשבוע האחרון');
+  }
+  return hit;
+}
+
+const driveFileId = (url) => (/\/d\/([\w-]+)/.exec(String(url)) || [])[1] || '';
 
 function issueOut(r) {
   const o = plain(r);
@@ -700,12 +721,48 @@ const ACTIONS = {
     return { id: req.id };
   },
 
+  rowGet: async (db, req, role) => plain(editableRow(db, req, role)),
+
+  /** Changes what was reported: notes, quantity, entry and exit time. A problem's description is its notes. */
+  rowEdit: async (db, req, role) => {
+    const hit = editableRow(db, req, role);
+    const cur = plain(hit), out = { 'עודכן': Date.now() };
+    if (req.notes != null) out['הערות'] = text(req.notes);
+    if (req.qty != null) out['כמות'] = req.qty === '' || !isFinite(Number(req.qty)) ? '' : Number(req.qty);
+    const time = (v) => { const d = Number(v); if (!isFinite(d) || d > Date.now() + 5 * 60000 || d < Date.UTC(2020, 0, 1)) throw new Error('זמן לא תקין'); return d; };
+    const start = req.start != null && req.start !== '' ? time(req.start) : cur['כניסה'];
+    const end = req.end != null && req.end !== '' ? time(req.end) : cur['יציאה'];
+    if (typeof start === 'number' && typeof end === 'number' && end < start) throw new Error('שעת יציאה לפני שעת כניסה');
+    if (req.start != null && req.start !== '') { out['כניסה'] = start; out['תאריך'] = dayOf(start); }
+    if (req.end != null && req.end !== '' && cur['סטטוס'] !== 'פתוח') out['יציאה'] = end;
+    await setCells(db, db.t.log, hit._row, out);
+    return plain(Object.assign({}, hit, Object.fromEntries(Object.entries(out).map(([k, v]) => [k, cellValue(k, v)]))));
+  },
+
+  rowDelete: async (db, req, role) => {
+    const hit = editableRow(db, req, role);
+    await setCells(db, db.t.log, hit._row, { 'סטטוס': DELETED, 'עודכן': Date.now() });
+    return { id: req.id };
+  },
+
+  /** Takes one photo off its row and moves the file to the Drive trash (recoverable there for 30 days). */
+  photoDelete: async (db, req, role) => {
+    const hit = editableRow(db, req, role);
+    const id = driveFileId(req.url);
+    const links = String(hit['תמונה'] || '').split(/\s+/).filter(Boolean);
+    const keep = links.filter((u) => driveFileId(u) !== id);
+    if (!id || keep.length === links.length) throw new Error('התמונה לא נמצאה ברשומה');
+    await setCells(db, db.t.log, hit._row, { 'תמונה': keep.join('\n'), 'עודכן': Date.now() });
+    await g(db.env, DRIVE + 'files/' + id, { method: 'PATCH', body: JSON.stringify({ trashed: true }) }).catch((e) => console.error(e.google || e));
+    return { id: req.id, photos: keep };
+  },
+
   dashboard: async (db) => ({
     greenhouses: greenhouseList(db),
     works: db.t.works.rows.map(workOut),
     workers: workerList(db),
-    log: workRows(db.t.log.rows).map(plain),
-    issues: db.t.log.rows.filter(isKind(KIND.issue)).map(issueOut),
+    log: workRows(db.t.log.rows).filter(alive).map(plain),
+    issues: db.t.log.rows.filter(isKind(KIND.issue)).filter(alive).map(issueOut),
     attendance: db.t.log.rows.filter(isKind(KIND.shift)).map(plain),
     tasks: db.t.tasks.rows.map(plain),
     system: await systemStatus(db),
