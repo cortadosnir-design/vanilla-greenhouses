@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>חממות וניל</title>
+  <meta name="theme-color" content="#f3f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d110f" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="חממות וניל">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- first run: farm code -->
+<div id="gate" class="gate" hidden>
+  <form id="gateForm" class="stack" autocomplete="off">
+    <img class="mark" src="icons/icon.svg" alt="">
+    <h1>חממות וניל</h1>
+    <div class="group">
+      <label class="field"><input id="gateCode" type="password" inputmode="numeric" placeholder="קוד חווה" aria-label="קוד חווה" required></label>
+    </div>
+    <p id="gateErr" class="error" role="alert"></p>
+    <button class="btn primary big" type="submit">כניסה</button>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <nav class="tabs" aria-label="ניווט ראשי">
+    <button type="button" data-tab="report" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 21c-4-3-7-6.5-7-10.5C5 6.4 8 3 12 3s7 3.4 7 7.5c0 4-3 7.5-7 10.5z"/><path d="M12 7v5l3 2"/></svg>
+      <span>דיווח</span>
+    </button>
+    <button type="button" data-tab="issue">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+      <span>בעיה</span>
+    </button>
+    <button type="button" data-tab="dash">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      <span>ניהול</span>
+    </button>
+  </nav>
+
+  <main>
+    <!-- ===== report ===== -->
+    <section id="report" class="view">
+      <header class="bar">
+        <h1>דיווח</h1>
+        <button type="button" id="who" class="chip-btn" aria-label="החלפת עובד"></button>
+      </header>
+      <div id="pending" class="pending" hidden></div>
+      <div id="wxStrip" class="wx-strip" hidden></div>
+
+      <div id="shiftOff" class="stack">
+        <button type="button" id="shiftInBtn" class="btn primary big">כניסה לעבודה</button>
+      </div>
+      <div id="shiftOn" class="shift" hidden>
+        <div class="shift-text"><span class="dot" aria-hidden="true"></span><span>בעבודה מ-<strong id="shiftStart"></strong></span></div>
+        <time id="shiftTimer" class="shift-timer" aria-label="זמן בעבודה היום">0:00</time>
+        <button type="button" id="shiftOutBtn" class="btn">יציאה מהעבודה</button>
+      </div>
+
+      <div id="idle" class="stack">
+        <div id="ghSeg" class="seg" role="radiogroup" aria-label="חממה"></div>
+        <div class="group"><select id="workSel" aria-label="עבודה"></select></div>
+        <button type="button" id="inBtn" class="btn primary big" disabled>כניסה לחממה</button>
+        <button type="button" id="installBtn" class="btn" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
+          התקנה בטלפון
+        </button>
+      </div>
+
+      <div id="active" class="stack" hidden>
+        <div class="live" aria-live="polite">
+          <div class="state"><span class="dot" aria-hidden="true"></span><span>בחממה</span></div>
+          <h2 id="liveGh"></h2>
+          <p id="liveWork"></p>
+          <time id="timer" class="timer" aria-label="זמן בחממה">0:00:00</time>
+        </div>
+        <div class="group">
+          <label id="qtyRow" class="field" hidden><span id="qtyUnit"></span><input id="qty" type="number" inputmode="decimal" min="0" step="any"></label>
+          <textarea id="notes" rows="3" placeholder="הערות" aria-label="הערות"></textarea>
+        </div>
+        <button type="button" id="outBtn" class="btn danger big">יציאה מהחממה</button>
+      </div>
+
+      <section id="myTasks" class="day card" aria-labelledby="myTasksTitle" hidden>
+        <div class="day-head"><h2 id="myTasksTitle">משימות קרובות</h2></div>
+        <ul id="myTasksList" class="list"></ul>
+      </section>
+
+      <section class="day card" aria-labelledby="dayTitle">
+        <div class="day-head"><h2 id="dayTitle">היום שלי</h2><span id="daySum" class="sub"></span></div>
+        <ol id="dayList" class="timeline"></ol>
+      </section>
+    </section>
+
+    <!-- ===== issue ===== -->
+    <section id="issue" class="view stack" hidden>
+      <header class="bar"><h1>דיווח על בעיה</h1></header>
+      <div id="issueGh" class="seg" role="radiogroup" aria-label="חממה"></div>
+      <div id="issueCat" class="chips" role="radiogroup" aria-label="קטגוריה"></div>
+      <div id="issueSev" class="seg" role="radiogroup" aria-label="חומרה"></div>
+      <div class="group">
+        <textarea id="issueDesc" rows="4" placeholder="מה ראית?" aria-label="תיאור הבעיה"></textarea>
+      </div>
+      <button type="button" id="issueBtn" class="btn primary big" disabled>שליחת הבעיה</button>
+    </section>
+
+    <!-- ===== dashboard ===== -->
+    <section id="dash" class="view wide" hidden>
+      <header class="bar"><h1>ניהול</h1></header>
+
+      <form id="mgrForm" class="stack" hidden autocomplete="off" style="max-width:360px">
+        <div class="group"><label class="field"><input id="mgrCode" type="password" inputmode="numeric" placeholder="קוד מנהל" aria-label="קוד מנהל" required></label></div>
+        <p id="mgrErr" class="error" role="alert"></p>
+        <button class="btn primary big" type="submit">פתיחת הדשבורד</button>
+      </form>
+
+      <div id="dashBody" hidden>
+        <div class="toolbar">
+          <div id="rangeSeg" class="seg" role="radiogroup" aria-label="טווח תאריכים">
+            <button type="button" role="radio" data-range="7">שבוע</button>
+            <button type="button" role="radio" data-range="30">חודש</button>
+            <button type="button" role="radio" data-range="365">שנה</button>
+            <button type="button" role="radio" data-range="all">הכול</button>
+          </div>
+          <button type="button" id="tasksBtn" class="btn primary">עבודות עתידיות <span id="tasksCount" class="count" hidden></span></button>
+          <button type="button" id="xlsBtn" class="btn">ייצוא ל-Excel</button>
+          <button type="button" id="gsBtn" class="btn">דוח Google Sheets</button>
+          <button type="button" id="qrBtn" class="btn">הדפסת QR</button>
+          <button type="button" id="refreshBtn" class="btn plain" aria-label="רענון">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
+        </div>
+
+        <section id="wxCard" class="card wx-card" aria-label="מזג אוויר בשניר" hidden></section>
+
+        <div id="ghCards" class="ghs" style="margin-top:16px"></div>
+
+        <div class="dash-grid">
+          <article class="card span-2">
+            <h2>השוואה בין חממות</h2>
+            <div class="table-wrap"><table class="compare">
+              <thead><tr><th>חממה</th><th>תאריך אחרון</th><th>שעות</th><th>ביקורים</th><th>פרחים הואבקו</th><th>תרמילים</th><th>בעיות חדשות</th></tr></thead>
+              <tbody id="compareBody"></tbody>
+            </table></div>
+            <p id="compareNote" class="sub" style="margin:10px 0 0"></p>
+          </article>
+          <article class="card"><h2>נוכחות היום</h2><ul id="presence" class="list"></ul></article>
+          <article class="card"><h2>מגיע היום</h2><ul id="dueList" class="list"></ul></article>
+          <article class="card"><h2>בעיות</h2><ul id="issueList" class="list"></ul></article>
+          <article class="card"><h2>שעות לפי עובד</h2><div id="workerBars" class="bars"></div></article>
+          <article class="card"><h2>תפוקה</h2><div id="yield" class="yield"></div></article>
+          <article class="card span-2">
+            <h2>יומן עבודה</h2>
+            <div class="filters">
+              <select id="fGh" aria-label="סינון לפי חממה"></select>
+              <select id="fWorker" aria-label="סינון לפי עובד"></select>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>תאריך</th><th>עובד</th><th>חממה</th><th>עבודה</th><th>שעות</th><th>כמות</th><th>תמונה</th></tr></thead>
+              <tbody id="logBody"></tbody>
+            </table></div>
+          </article>
+          <article class="card span-2">
+            <h2>תמונות</h2>
+            <div class="upload stack">
+              <div id="upGh" class="seg" role="radiogroup" aria-label="חממה"></div>
+              <div class="group">
+                <label class="field"><span>תאריך</span><input id="upDate" type="date"></label>
+                <input id="upNote" class="note" type="text" placeholder="הערה" aria-label="הערה">
+                <label class="photo">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
+                  <span id="upPhotoLabel">הוספת תמונות</span>
+                  <input id="upPhoto" type="file" accept="image/*" multiple>
+                </label>
+                <div id="upThumbs" class="thumbs" hidden></div>
+              </div>
+              <button type="button" id="upBtn" class="btn primary" disabled>העלאת תמונות</button>
+            </div>
+            <div id="photoGrid" class="photos"></div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog id="whoDlg" aria-labelledby="whoTitle">
+  <div class="sheet-head"><h2 id="whoTitle">מי מדווח?</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
+  <div class="sheet-body"><ul id="whoList" class="list"></ul></div>
+</dialog>
+
+<dialog id="resolveDlg" aria-labelledby="resolveTitle">
+  <div class="sheet-head"><h2 id="resolveTitle"></h2><button type="button" class="btn plain" data-close>ביטול</button></div>
+  <div class="sheet-body stack">
+    <p id="resolveDesc" style="margin:0"></p>
+    <div id="resolveSeg" class="seg" role="radiogroup" aria-label="סטטוס">
+      <button type="button" role="radio" data-status="פתוח">פתוח</button>
+      <button type="button" role="radio" data-status="בטיפול">בטיפול</button>
+      <button type="button" role="radio" data-status="טופל">טופל</button>
+    </div>
+    <div class="group"><textarea id="resolveText" rows="3" placeholder="מה נעשה?" aria-label="פתרון"></textarea></div>
+    <button type="button" id="resolveBtn" class="btn primary big">שמירה</button>
+  </div>
+</dialog>
+
+<dialog id="tasksDlg" aria-labelledby="tasksTitle">
+  <div class="sheet-head"><h2 id="tasksTitle">עבודות עתידיות</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
+  <div class="sheet-body stack">
+    <div id="tGh" class="seg" role="radiogroup" aria-label="חממה"></div>
+    <div class="group">
+      <select id="tWork" aria-label="משימה"></select>
+      <input id="tText" class="note" type="text" placeholder="או משימה אחרת" aria-label="משימה אחרת">
+      <label class="field"><span>תאריך לביצוע</span><input id="tDate" type="date"></label>
+      <select id="tWorker" aria-label="עובד"></select>
+    </div>
+    <button type="button" id="tAdd" class="btn primary big" disabled>הוספת משימה</button>
+    <ul id="tList" class="list"></ul>
+  </div>
+</dialog>
+
+<dialog id="installDlg" aria-labelledby="installTitle">
+  <div class="sheet-head"><h2 id="installTitle">התקנה במסך הבית</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
+  <div class="sheet-body stack">
+    <ol class="steps">
+      <li>לוחצים על כפתור השיתוף בסרגל הדפדפן (ריבוע עם חץ למעלה).</li>
+      <li>גוללים ובוחרים "הוספה למסך הבית".</li>
+      <li>לוחצים "הוספה". האייקון יופיע בין האפליקציות.</li>
+    </ol>
+  </div>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="qrSheet" aria-hidden="true"></div>
+
+<script src="config.js"></script>
+<script>
+  // ?demo turns on a self-contained demo (no server); it is remembered until ?demo=off
+  (function () { try { var q = location.search; if (/[?&]demo=off/.test(q)) localStorage.removeItem('vg.demo'); else if (/[?&]demo/.test(q)) localStorage.setItem('vg.demo', '1'); if (localStorage.getItem('vg.demo')) document.write('<script src="demo.js"><\/script>'); } catch (e) {} })();
+</script>
+<script src="logic.js"></script>
+<script src="weather.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
