@@ -9,12 +9,14 @@
   const LONG_SHIFT = 14 * 3600000; // a session older than this was probably never checked out
 
   // ---------- storage ----------
+  // the demo keeps its own keys, so its sample code and lists never leak into the real app on the same phone
+  const KEY = window.DEMO_API ? 'vgdemo.' : 'vg.';
   const store = {
-    get(k, d) { try { const v = localStorage.getItem('vg.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    get(k, d) { try { const v = localStorage.getItem(KEY + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) {
-      try { localStorage.setItem('vg.' + k, JSON.stringify(v)); return true; } catch (e) { toast('אין מספיק מקום במכשיר לשמירה'); return false; }
+      try { localStorage.setItem(KEY + k, JSON.stringify(v)); return true; } catch (e) { toast('אין מספיק מקום במכשיר לשמירה'); return false; }
     },
-    del(k) { try { localStorage.removeItem('vg.' + k); } catch (e) { /* ignore */ } },
+    del(k) { try { localStorage.removeItem(KEY + k); } catch (e) { /* ignore */ } },
   };
 
   const state = {
