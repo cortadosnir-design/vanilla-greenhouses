@@ -60,15 +60,18 @@ put('הגדרות', obj('הגדרות', { 'הגדרה': 'קוד מנהל', 'ער
 put('הגדרות', obj('הגדרות', { 'הגדרה': 'מזהה תיקיית תמונות ב-Drive', 'ערך': '' }));
 put('הגדרות', obj('הגדרות', { 'הגדרה': 'אימייל לעדכון יומי', 'ערך': 'owner@example.com' }));
 
-const drive = { files: [], folders: [] };
+const drive = { files: [], folders: [], editors: [] };
 const sandbox = {
   SpreadsheetApp: { getActive: () => main, create: (name) => new Spreadsheet(name, [new Sheet('Sheet1', [])]), BandingTheme: { GREEN: 1 } },
   DriveApp: {
     Access: { ANYONE_WITH_LINK: 'link' }, Permission: { VIEW: 'view' },
     getRootFolder: () => ({ getName: () => 'root' }),
-    createFolder: (n) => { const f = { id: 'folder-' + drive.folders.length, name: n, getId() { return this.id; }, createFile(b) { const file = { id: 'file-' + drive.files.length, blob: b, shared: null, setSharing(a, p) { this.shared = [a, p]; }, getUrl() { return 'https://drive.google.com/file/d/' + this.id + '/view'; } }; drive.files.push(file); return file; } }; drive.folders.push(f); return f; },
+    createFolder: (n) => { const f = { id: 'folder-' + drive.folders.length, name: n, files: [], getId() { return this.id; }, addEditor(e) { drive.editors.push([this.name, e]); },
+      getFiles() { let i = 0; const list = this.files; return { hasNext: () => i < list.length, next: () => list[i++] }; }, createFile(b) { const file = { id: 'file-' + drive.files.length, blob: b, shared: null, setSharing(a, p) { this.shared = [a, p]; }, getUrl() { return 'https://drive.google.com/file/d/' + this.id + '/view'; } }; drive.files.push(file); return file; } }; drive.folders.push(f); return f; },
     getFolderById: (id) => drive.folders.find((f) => f.id === id) || (() => { throw new Error('no folder ' + id); })(),
-    getFileById: (id) => ({ getParents: () => ({ hasNext: () => false }), setSharing() {}, moveTo() {} }),
+    getFileById: (id) => ({ getParents: () => ({ hasNext: () => false }), setSharing() {}, moveTo() {}, addEditor(e) { drive.editors.push(['file:' + id, e]); },
+      makeCopy(name, folder) { const f = { name, created: new Date(), trashed: false, getName() { return this.name; }, getDateCreated() { return this.created; }, setTrashed(v) { this.trashed = v; }, getUrl() { return 'https://sheets/copy-' + name; } }; folder.files.push(f); return f; } }),
+    getStorageUsed: () => 3e9, getStorageLimit: () => 15e9,
   },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
   CacheService: (() => { const store = {}; const c = { get: (k) => store[k] ?? null, put: (k, v) => { store[k] = v; } }; return { getScriptCache: () => c }; })(),
@@ -196,6 +199,28 @@ assert.strictEqual(d.data.photos.length, 1);
 r = call({ action: 'report', code: M, from: t0 - 86400000, to: t0 + 86400000 });
 assert.ok(r.ok, r.error);
 assert.match(r.data.url, /sheets\/ss-/);
+
+// backup: dated copy, old copies trashed, owner's own files untouched, second owner added, status reported
+put('הגדרות', obj('הגדרות', { 'הגדרה': 'מזהה תיקיית גיבוי ב-Drive', 'ערך': '' }));
+put('הגדרות', obj('הגדרות', { 'הגדרה': 'אימייל בעלים שני', 'ערך': 'second@example.com' }));
+put('הגדרות', obj('הגדרות', { 'הגדרה': 'גיבוי אחרון', 'ערך': '' }));
+put('הגדרות', obj('הגדרות', { 'הגדרה': 'ימים לשמירת גיבויים', 'ערך': 30 }));
+assert.strictEqual(call({ action: 'backup', code: W }).error, 'נדרש קוד מנהל');
+r = call({ action: 'backup', code: M });
+assert.ok(r.ok, r.error);
+const bfolder = drive.folders.find((f) => f.name === 'חממות וניל - גיבויים');
+assert.ok(bfolder && bfolder.files.length === 1, 'backup copy in its folder');
+const oldCopy = bfolder.files[0]; oldCopy.created = new Date(Date.now() - 40 * 86400000);
+const mine = { name: 'קובץ שלי', created: new Date(0), trashed: false, getName() { return this.name; }, getDateCreated() { return this.created; }, setTrashed(v) { this.trashed = v; } };
+bfolder.files.push(mine);
+r = call({ action: 'backup', code: M });
+assert.ok(r.ok, r.error);
+assert.strictEqual(oldCopy.trashed, true, 'copy older than 30 days trashed');
+assert.strictEqual(mine.trashed, false, "owner's own file untouched");
+assert.strictEqual(r.data.removed, 1);
+assert.ok(drive.editors.some(([, e]) => e === 'second@example.com'), 'second owner added');
+const sys = call({ action: 'dashboard', code: M }).data.system;
+assert.ok(sys.lastBackup > Date.now() - 60000 && sys.secondOwner && sys.driveLimit === 15e9);
 
 // rate limit after 20 bad codes
 for (let i = 0; i < 20; i++) call({ action: 'bootstrap', code: 'bad' + i });
