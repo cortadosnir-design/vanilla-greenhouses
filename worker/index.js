@@ -472,13 +472,23 @@ async function append(db, t, obj, opts = {}) {
   return row;
 }
 
+/** Photo links, one per line, each one a real link in the sheet (a plain text URL is not clickable). */
+function linkCell(v) {
+  const urls = String(v || '').split(/\s+/).filter(Boolean);
+  if (!urls.length) return {};
+  let at = 0;
+  const textFormatRuns = urls.map((u) => { const run = { startIndex: at, format: { link: { uri: u } } }; at += u.length + 1; return run; });
+  return { userEnteredValue: { stringValue: urls.join('\n') }, textFormatRuns };
+}
+
 /** Writes cells of an existing row; date cells get their format. Columns the tab doesn't have are skipped. */
 function setCells(db, t, row, obj) {
   const reqs = [];
   Object.keys(obj).forEach((h) => {
     if (!t.head.includes(h)) return;
-    const cell = cellData(cellValue(h, obj[h]));
-    let fields = 'userEnteredValue';
+    const photo = h === 'תמונה';
+    const cell = photo ? linkCell(obj[h]) : cellData(cellValue(h, obj[h]));
+    let fields = 'userEnteredValue' + (photo ? ',textFormatRuns' : '');
     if (DATE_COLS[h] && typeof obj[h] === 'number') {
       cell.userEnteredFormat = { numberFormat: { type: patternType(DATE_COLS[h]), pattern: DATE_COLS[h] } };
       fields += ',userEnteredFormat.numberFormat';
