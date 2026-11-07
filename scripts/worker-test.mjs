@@ -276,9 +276,18 @@ assert.deepStrictEqual(photos[0].parents, ['PHOTOS-folder-1234'], 'into the fold
 assert.match(photos[2].name, /^חממה 3 \d{4}-\d\d-\d\d \d\d-\d\d \(3\)\.jpg$/, 'named by greenhouse, upload time and number');
 assert.ok(perms.some((p) => p.file === photos[0].id && p.type === 'anyone' && p.role === 'reader'), 'thumbnail can be shown');
 assert.match((await call({ action: 'photo', code: M, id: 'P-404', idx: 0, photo: jpg })).error, /לא נמצאה/);
+// the worker photographs during a visit: the link goes into that visit's row, the file is named by its entry time
+assert.strictEqual((await call({ action: 'photo', code: W, id: 'P-1', idx: 5, photo: jpg })).error, 'נדרש קוד מנהל', 'a worker cannot add to a photo set');
+assert.ok((await call({ action: 'photo', code: W, id: 'L-1', idx: 0, photo: jpg })).ok);
+const visitRow = log.find((r) => r[logCol('מזהה')] === 'L-1');
+assert.match(visitRow[logCol('חומרים / תמונות')], /^https:\/\/drive\.google\.com\/file\/d\/F\d+\/view/, 'link in the visit row');
+const visitFile = files.filter((f) => f.mimeType === 'image/jpeg').pop();
+const entry = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(t0)).replace(':', '-');
+assert.strictEqual(visitFile.name, 'חממה 1 ' + entry + ' (1).jpg', 'named by greenhouse and the visit entry time');
+assert.match((await call({ action: 'photo', code: W, id: 'S-1', idx: 0, photo: jpg })).error, /נדרש קוד מנהל/, 'not on a work day row');
 assert.match((await call({ action: 'photo', code: M, id: 'P-1', idx: 3, photo: 'garbage' })).error, /לא תקינה/);
 assert.match((await call({ action: 'photo', code: M, id: 'P-1', idx: 3, photo: 'data:image/svg+xml;base64,PHN2Zz4=' })).error, /לא תקינה/, 'JPEG only');
-assert.strictEqual(files.filter((f) => f.mimeType === 'image/jpeg').length, 3, 'nothing uploaded for refused photos');
+assert.strictEqual(files.filter((f) => f.mimeType === 'image/jpeg').length, 4, 'nothing uploaded for refused photos');
 
 // ---- planned works go to Calendar ----
 const cal = tabs['Calendar'];

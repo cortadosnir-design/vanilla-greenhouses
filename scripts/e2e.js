@@ -13,6 +13,17 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
     temperature_2m_max: [18.7, 22, 36, 25, 24, 20, 19], temperature_2m_min: [12, 6, 14, 13, 12, 11, 10], precipitation_sum: [14.5, 0, 0, 0, 0, 20, 0],
     precipitation_probability_max: [100, 10, 0, 0, 20, 80, 30], wind_speed_10m_max: [12.4, 50, 10, 10, 15, 40, 10], relative_humidity_2m_max: [98, 80, 60, 70, 75, 95, 99], relative_humidity_2m_min: [86, 40, 30, 50, 55, 70, 90] } };
 
+const HISTORY = { daily: { time: Array.from({ length: 31 }, (_, i) => new Date(Date.now() - (30 - i) * 86400000).toISOString().slice(0, 10)),
+  temperature_2m_max: Array.from({ length: 31 }, (_, i) => 22 + (i % 7)), temperature_2m_min: Array.from({ length: 31 }, (_, i) => 12 + (i % 5)),
+  precipitation_sum: Array.from({ length: 31 }, (_, i) => (i % 9 === 0 ? 6 : 0)), relative_humidity_2m_mean: Array.from({ length: 31 }, () => 72), weather_code: Array.from({ length: 31 }, () => 2) } };
+const meteo = (r) => r.fulfill({ json: /past_days/.test(r.request().url()) ? HISTORY : WEATHER });
+// the opening scene plays on every launch; a tap skips it
+async function skipIntro(p) {
+  await p.waitForSelector('#intro');
+  if (!(await p.$('#intro.gone'))) await p.click('#intro').catch(() => {});
+  await p.waitForSelector('#intro.gone', { state: 'attached', timeout: 5000 });
+}
+
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -22,7 +33,7 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   await ctx.route('**/exceljs.min.js', (r) => r.fulfill({ path: path.join(__dirname, 'node_modules/exceljs/dist/exceljs.min.js'), contentType: 'text/javascript' }));
   await ctx.route('**/qrcode.min.js', (r) => r.fulfill({ path: path.join(__dirname, 'node_modules/qrcodejs2/qrcode.min.js'), contentType: 'text/javascript' }));
   await ctx.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
-  await ctx.route('**/api.open-meteo.com/**', (r) => r.fulfill({ json: WEATHER }));
+  await ctx.route('**/api.open-meteo.com/**', meteo);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   // resource failures are expected here (Drive thumbnails are unreachable, and the offline step aborts /api); JS errors are not
@@ -30,6 +41,9 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
 
   // 1. gate + QR deep link
   await page.goto(BASE + '?gh=GH2');
+  assert.ok(!(await page.$('#intro.gone')), 'opening scene shows on launch');
+  await page.screenshot({ path: path.join(SHOTS, '00-intro.png') });
+  await skipIntro(page);
   await page.fill('#gateCode', '0000');
   await page.click('#gateForm button[type=submit]');
   await page.waitForSelector('#gateErr:has-text("קוד שגוי")');
@@ -48,6 +62,7 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
 
   // 1b. a stale/bad greenhouse id from a QR is dropped
   await page.goto(BASE + '?gh=GH9');
+  await skipIntro(page);
   await page.waitForSelector('#idle:not([hidden])');
   assert.strictEqual((await page.$$('#ghSeg [aria-checked="true"]')).length, 0, 'bad QR id not selected');
   await page.selectOption('#workSel', 'W01');
@@ -55,9 +70,11 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   await page.click('#ghSeg button[data-v=GH2]');
 
   // 1c. attendance clock: start the day
-  assert.ok(!(await page.isHidden('#shiftInBtn')), 'clock-in visible');
+  assert.ok(!(await page.isHidden('#shiftInBtn')) && await page.isDisabled('#shiftOutBtn'), 'clock-in and clock-out side by side');
+  assert.ok(await page.isDisabled('#outBtn'), 'greenhouse exit waits for an entry');
   await page.click('#shiftInBtn');
-  await page.waitForSelector('#shiftOn:not([hidden])');
+  await page.waitForSelector('#shiftBar.on');
+  assert.ok(await page.isDisabled('#shiftInBtn') && !(await page.isDisabled('#shiftOutBtn')));
   assert.match(await page.textContent('#dayList'), /כניסה לעבודה/);
 
   // 2. check in
@@ -74,11 +91,18 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
 
   // persistence: reload keeps the session
   await page.reload();
+  await skipIntro(page);
   await page.waitForSelector('#active:not([hidden])');
+  assert.ok(await page.isDisabled('#inBtn') && !(await page.isDisabled('#outBtn')), 'inside: only exit is active');
   assert.strictEqual(await page.textContent('#liveGh'), 'חממה 2', 'active session survives reload');
 
-  // 3. check out with qty (workers no longer upload photos)
-  assert.strictEqual(await page.$$eval('#active input[type=file]', (x) => x.length), 0, 'no photo picker for workers');
+  // 3. a photo inside the greenhouse goes into the visit's own row; then check out with qty
+  const visitPng = path.join(__dirname, '..', 'docs', 'icons', 'icon-180.png');
+  await page.setInputFiles('#camInput', [visitPng, visitPng]);
+  await page.waitForSelector('#toast.show:has-text("בשורת הביקור")', { timeout: 30000 });
+  assert.match(await page.textContent('#camLabel'), /2 תמונות/);
+  let visitRow = (await (await page.request.get(BASE + '__calls')).json()).log.slice(-1)[0];
+  assert.strictEqual(visitRow['תמונה'].split('\n').length, 2, 'both photos in the visit row');
   await page.fill('#qty', '42');
   await page.fill('#notes', 'פרחים יפים');
   await page.click('#outBtn');
@@ -142,7 +166,7 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
 
   // clock out ends the day; server row closed
   await page.click('#shiftOutBtn');
-  await page.waitForSelector('#shiftOff:not([hidden])');
+  await page.waitForSelector('#shiftBar:not(.on)');
   await page.waitForSelector('#pending', { state: 'hidden', timeout: 10000 });
   assert.match(await page.textContent('#dayList'), /יציאה מהעבודה/);
   server = await (await page.request.get(BASE + '__calls')).json();
@@ -178,7 +202,12 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   assert.ok((await page.$$('#wxCard .wx-day')).length === 7, '7 forecast days');
   assert.match(await page.textContent('#wxCard .wx-alerts'), /חום של 36/);
   assert.ok((await page.$$('#compareBody tr')).length === 3, 'comparison rows');
-  assert.match(await page.textContent('#presence'), /דנה/);
+  assert.strictEqual((await page.$$('#kpis .kpi')).length, 5, 'five numbers on top');
+  assert.ok((await page.textContent('#nowCard')).length > 3, 'who is in the greenhouse now');
+  assert.strictEqual((await page.$$('#journey .vine')).length, 3, 'vanilla journey per greenhouse');
+  await page.waitForSelector('#hoursChart svg rect.b');
+  await page.waitForSelector('#wxHistory svg polyline.hi');
+  assert.match(await page.textContent('#gallery'), /לחות 72%/, "each gallery day shows that day's weather");
   assert.ok((await page.$$('#compareBody .delta')).length >= 15, 'comparison deltas');
   await page.click('#rangeSeg button[data-range=all]');
   assert.strictEqual((await page.$$('#compareBody .delta')).length, 0, 'no deltas for "all"');
@@ -214,6 +243,7 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   // manager photo upload: up to 20, attached to a greenhouse and date
   const png = path.join(__dirname, '..', 'docs', 'icons', 'icon-512.png');
   const png2 = path.join(__dirname, '..', 'docs', 'icons', 'icon-180.png');
+  await page.click('.upload-box summary');
   assert.ok(await page.isDisabled('#upBtn'), 'upload disabled without photos');
   await page.click('#upGh button[data-v=GH3]');
   await page.fill('#upNote', 'פריחה ראשונה');
@@ -234,7 +264,11 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   assert.strictEqual(set['חממה'], 'חממה 3');
   assert.strictEqual(set['הערה'], 'פריחה ראשונה');
   assert.strictEqual(set['תמונה'].split('\n').length, 20, 'all 20 photos reached the server');
-  await page.waitForFunction(() => document.querySelectorAll('#photoGrid img').length >= 20);
+  await page.waitForFunction(() => document.querySelectorAll('#gallery img').length >= 20);
+  await page.click('#gallery button[data-id]');
+  await page.waitForSelector('#lightbox[open]');
+  assert.match(await page.getAttribute('#lbLink', 'href'), /^https:\/\/drive\.google\.com\/file\/d\//);
+  await page.click('#lightbox [data-close]');
 
   // resolve an issue
   await page.click('#issueList button[data-id]');
@@ -247,7 +281,9 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   assert.ok(server.issues.some((i) => i['פתרון'] === 'רוסס'));
 
   // excel export downloads a real xlsx
+  await page.click('.more summary');
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('#xlsBtn')]);
+  assert.ok(!(await page.$('details.more[open]')), 'menu closes after an action');
   const xlsx = path.join(SHOTS, 'export.xlsx');
   await dl.saveAs(xlsx);
   assert.ok(fs.statSync(xlsx).size > 5000, 'xlsx has content');
@@ -255,11 +291,12 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   // 8. desktop layout + dark mode
   const desk = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: 'he-IL', timezoneId: 'Asia/Jerusalem', colorScheme: 'dark', serviceWorkers: 'block' });
   await desk.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
-  await desk.route('**/api.open-meteo.com/**', (r) => r.fulfill({ json: WEATHER }));
+  await desk.route('**/api.open-meteo.com/**', meteo);
   const dp = await desk.newPage();
   dp.on('pageerror', (e) => errors.push('desktop pageerror: ' + e.message));
   const callsBeforeDemo = (await (await dp.request.get(BASE + '__calls')).json()).calls.length;
   await dp.goto(BASE + '?demo');
+  await skipIntro(dp);
   assert.match(await dp.textContent('#gateErr'), /מצב הדגמה/);
   await dp.fill('#gateCode', '9876');
   await dp.click('#gateForm button[type=submit]');
@@ -275,6 +312,7 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   const demoCalls = await (await dp.request.get(BASE + '__calls')).json();
   assert.strictEqual(demoCalls.calls.length, callsBeforeDemo, 'demo mode never hit the server');
   await dp.goto(BASE + '?demo=off');
+  await skipIntro(dp);
   await dp.waitForSelector('#gate:not([hidden])');
   assert.strictEqual(await dp.textContent('#gateErr'), '', 'leaving the demo shows the real code screen, not demo data');
 
