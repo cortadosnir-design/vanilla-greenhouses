@@ -1,0 +1,16 @@
+# Same settings as in the Cloudflare dashboard. Secrets (GOOGLE_CLIENT_SECRET, WORKER_CODE, MANAGER_CODE) are set there, never here.
+name = "vanilla-greenhouses"
+main = "index.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+SHEET_ID = "1W5ST0XdnwiSzuY7MN8EIhTk0yZlCPmVSSJaqL-nYNLI"
+ALLOWED_EMAIL = "cortado.snir@gmail.com"
+GOOGLE_CLIENT_ID = ""
+
+[[kv_namespaces]]
+binding = "STORE"
+id = ""
+
+[triggers]
+crons = ["0 0 * * *"]
