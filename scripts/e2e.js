@@ -78,13 +78,9 @@ async function skipIntro(p) {
   assert.ok(await page.isDisabled('#inBtn'), 'no check-in without a valid greenhouse');
   await page.click('#ghSeg button[data-v=GH2]');
 
-  // 1c. attendance clock: start the day
-  assert.ok(!(await page.isHidden('#shiftInBtn')) && await page.isDisabled('#shiftOutBtn'), 'clock-in and clock-out side by side');
+  // 1c. one pair on the screen: into the greenhouse and out of it
+  assert.strictEqual(await page.$('#shiftInBtn'), null, 'no separate work-day clock');
   assert.ok(await page.isDisabled('#outBtn'), 'greenhouse exit waits for an entry');
-  await page.click('#shiftInBtn');
-  await page.waitForSelector('#shiftBar.on');
-  assert.ok(await page.isDisabled('#shiftInBtn') && !(await page.isDisabled('#shiftOutBtn')));
-  assert.match(await page.textContent('#dayList'), /כניסה לעבודה/);
 
   // 2. check in
   await page.selectOption('#workSel', 'W01');
@@ -172,15 +168,6 @@ async function skipIntro(p) {
   assert.strictEqual(server.calls.filter((c) => c === 'checkIn').length, 3, 'in-flight check-in arrived');
   assert.strictEqual(server.calls.filter((c) => c === 'checkOut').length, 3, 'check-out enqueued during the in-flight send was not lost');
   assert.strictEqual(server.log[server.log.length - 1]['סטטוס'], 'סגור');
-
-  // clock out ends the day; server row closed
-  await page.click('#shiftOutBtn');
-  await page.waitForSelector('#shiftBar:not(.on)');
-  await page.waitForSelector('#pending', { state: 'hidden', timeout: 10000 });
-  assert.match(await page.textContent('#dayList'), /יציאה מהעבודה/);
-  server = await (await page.request.get(BASE + '__calls')).json();
-  const myShift = server.attendance.find((a) => a['עובד'] === 'דנה' && a['מזהה'] !== 'S-1');
-  assert.ok(myShift && myShift['סטטוס'] === 'סגור', 'shift closed on server');
 
   // 6. issue
   await page.click('.tabs button[data-tab=issue]');
@@ -349,9 +336,10 @@ async function skipIntro(p) {
   await gp.waitForSelector('#app:not([hidden])');
   assert.ok(await gp.isHidden('#who'), 'the signed-in account reports, no worker picker');
   assert.match(await gp.textContent('#signOutBtn'), /מנהל/);
-  await gp.click('.tabs button[data-tab=dash]');
   await gp.waitForSelector('#ghCards .gh');
-  assert.ok(await gp.isHidden('#mgrForm'), 'a manager account opens the dashboard without a code');
+  assert.ok(await gp.isHidden('#mgrForm'), 'a manager opens straight on the dashboard, without a code');
+  assert.match(await gp.textContent('#ghCards .gh .facts'), /90 צמחים.*50 מ"ר.*3 שורות.*נטיעה 2023/, 'Master Data on the greenhouse card');
+  assert.strictEqual(await gp.getAttribute('.tabs button:first-child', 'data-tab'), 'dash', 'the dashboard is the first tab');
   await gp.click('.more summary');
   await gp.click('#usersBtn');
   await gp.waitForSelector('#uList li:has-text("gershon@gmail.com")');
@@ -377,9 +365,8 @@ async function skipIntro(p) {
   await gp.evaluate(() => { window.TEST_EMAIL = 'shahar@gmail.com'; });
   await gp.click('#gsiBtn');
   await gp.waitForSelector('#app:not([hidden])');
-  await gp.click('.tabs button[data-tab=dash]');
-  await gp.waitForSelector('#mgrNo:not([hidden])');
-  assert.ok(await gp.isHidden('#mgrForm'), 'a worker account sees "managers only", not a code box');
+  assert.ok(await gp.isHidden('#dashTab'), 'a worker account has no dashboard tab');
+  assert.ok(!(await gp.isHidden('#report')), 'a worker opens on the work screen');
 
   await browser.close();
   assert.deepStrictEqual(errors, [], errors.join('\n'));

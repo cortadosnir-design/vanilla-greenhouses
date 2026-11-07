@@ -202,6 +202,7 @@ assert.strictEqual((await call({ action: 'stamp', code: W })).data.v, st1, 'same
 
 // ---- bootstrap reads the farm's tabs ----
 const boot = (await call({ action: 'bootstrap', code: W })).data;
+assert.ok(boot.greenhouses[0].info.length > 0 && boot.greenhouses[0].info.every(([k, v]) => k && v), 'each greenhouse carries its Master Data rows');
 assert.deepStrictEqual(boot.greenhouses.map((x) => x.id + ':' + x.name), ['GH1:חממה 1', 'GH2:חממה 2', 'GH3:חממה 3']);
 const w09 = boot.works.find((w) => w.code === 'W09');
 assert.deepStrictEqual([w09.name, w09.category, w09.interval, w09.track], ['ניטור מזיקים ומחלות', 'הגנת הצומח', 7, true]);

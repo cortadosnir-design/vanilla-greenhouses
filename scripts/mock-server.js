@@ -9,7 +9,7 @@ const SITE = path.join(__dirname, '..', 'docs');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 
 const day = (d, h = 9) => new Date(2026, 10, d, h).getTime();
-const greenhouses = [{ id: 'GH1', name: 'חממה 1' }, { id: 'GH2', name: 'חממה 2' }, { id: 'GH3', name: 'חממה 3' }];
+const greenhouses = [{ id: 'GH1', name: 'חממה 1', info: [['שטח החממה (מ"ר)', '50'], ['מספר שורות בחממה', '3'], ['סה"כ צמחים בחממה', '90'], ['זן / מקור הצמחים', 'Vanilla planifolia'], ['תאריך / שנת נטיעה', '2023']] }, { id: 'GH2', name: 'חממה 2' }, { id: 'GH3', name: 'חממה 3' }];
 const works = [
   { code: 'W01', category: 'האבקה ופריחה', name: 'האבקה ידנית של פרחים', unit: 'פרחים', location: 'חממה', interval: 1, track: false },
   { code: 'W03', category: 'עיצוב וצימוח', name: 'עיצוב לולאות וליפוף ענפים (Looping)', unit: '', location: 'חממה', interval: 7, track: true },
