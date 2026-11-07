@@ -6,11 +6,11 @@ compatibility_date = "2025-09-01"
 [vars]
 SHEET_ID = "1W5ST0XdnwiSzuY7MN8EIhTk0yZlCPmVSSJaqL-nYNLI"
 ALLOWED_EMAIL = "cortado.snir@gmail.com"
-GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_ID = "240010414260-9noanq5ima7ge7pltvilnue75v77m6em.apps.googleusercontent.com"
 
 [[kv_namespaces]]
 binding = "STORE"
-id = ""
+id = "bce3a71eb4a94826b3435e5bbe8b6241"
 
 [triggers]
 crons = ["0 0 * * *"]

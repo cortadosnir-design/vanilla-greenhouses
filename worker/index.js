@@ -57,6 +57,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (url.pathname === '/connect') return connect(url, env);
     if (url.pathname === '/oauth') return oauth(url, env);
+    if (url.pathname === '/privacy') return page('מעקב חממות וניל היא אפליקציה פרטית של משק הוניל בקיבוץ שניר. היא קוראת וכותבת רק בקובץ הגיליון של המשק ובתיקיות שלו ב-Google Drive, ולא מעבירה נתונים לאף אחד אחר.');
     if (request.method !== 'POST') return json({ ok: true, app: 'vanilla-greenhouses', connected: !!(await env.STORE.get('refresh_token')) });
     return json(await api(request, env));
   },
