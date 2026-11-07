@@ -723,7 +723,7 @@
   // greenhouse vs greenhouse for the range, each number with its change against the previous window
   function renderCompare(R, d) {
     const rowsFor = (log, issues) => d.greenhouses.map((g) => {
-      const mine = log.filter((r) => r['חממה'] === g.name);
+      const mine = log.filter((r) => r['חממה'] === g.name && r['קוד עבודה'] !== 'PHOTO');
       const q = (c) => mine.filter((r) => r['קוד עבודה'] === c).reduce((a, r) => a + (Number(r['כמות']) || 0), 0);
       return { gh: g.name, last: mine.reduce((m, r) => Math.max(m, r['תאריך'] || 0), 0), hours: mine.reduce((a, r) => a + (Number(r['שעות']) || 0), 0), visits: mine.length, flowers: q('W01'), pods: q('W11'), issues: issues.filter((r) => r['חממה'] === g.name).length };
     });
