@@ -20,8 +20,12 @@ const SETTING = {
   managerCode: 'קוד מנהל',
   photoFolder: 'מזהה תיקיית תמונות ב-Drive',
   digestEmail: 'אימייל לעדכון יומי',
+  backupFolder: 'מזהה תיקיית גיבוי ב-Drive',
+  secondOwner: 'אימייל בעלים שני',
+  lastBackup: 'גיבוי אחרון',
+  keepDays: 'ימים לשמירת גיבויים',
 };
-const MANAGER_ONLY = ['dashboard', 'resolveIssue', 'report', 'photoSet', 'photo', 'taskAdd'];
+const MANAGER_ONLY = ['dashboard', 'resolveIssue', 'report', 'photoSet', 'photo', 'taskAdd', 'backup'];
 
 /** להריץ פעם אחת מהעורך כדי לאשר הרשאות גיליון ו-Drive (זה מה שחסר בגרסה הקודמת). */
 function authorize() {
@@ -206,8 +210,11 @@ const ACTIONS = {
       attendance: readTable(SHEETS.attendance).rows.map(plain),
       photos: readTable(SHEETS.photos).rows.map(plain),
       tasks: readTable(SHEETS.tasks).rows.map(plain),
+      system: systemStatus(),
     };
   },
+
+  backup: function () { return backupNow(); },
 
   resolveIssue: function (req) {
     return withLock(function () {
@@ -440,13 +447,59 @@ function savePhoto(dataUrl, name) {
   return file.getUrl();
 }
 
-function photoFolder() {
-  const s = settings();
-  const entry = s[SETTING.photoFolder];
+function photoFolder() { return ensureFolder(SETTING.photoFolder, 'חממות וניל - תמונות'); }
+
+/** The folder whose id is in a settings row; created (and its id written back) when the row is empty. */
+function ensureFolder(key, name) {
+  const entry = settings()[key];
   if (entry && entry.value) return DriveApp.getFolderById(entry.value);
-  const folder = DriveApp.createFolder('חממות וניל - תמונות');
+  const folder = DriveApp.createFolder(name);
   if (entry) ss().getSheetByName(SHEETS.settings).getRange(entry.row, 2).setValue(folder.getId());
   return folder;
+}
+
+function setSetting(key, value) {
+  const entry = settings()[key];
+  if (entry) ss().getSheetByName(SHEETS.settings).getRange(entry.row, 2).setValue(value);
+}
+
+// ---------- backup: a dated copy of the whole spreadsheet every night, old copies trashed (still recoverable for 30 days) ----------
+
+const BACKUP_PREFIX = 'גיבוי חממות וניל ';
+
+function backupNow() {
+  const folder = ensureFolder(SETTING.backupFolder, 'חממות וניל - גיבויים');
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const copy = DriveApp.getFileById(ss().getId()).makeCopy(BACKUP_PREFIX + Utilities.formatDate(now, tz, 'yyyy-MM-dd HH:mm'), folder);
+
+  const keep = Number((settings()[SETTING.keepDays] || {}).value) || 30;
+  const cutoff = new Date(now.getTime() - keep * 86400000);
+  let kept = 0, removed = 0;
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const f = files.next();
+    if (String(f.getName()).indexOf(BACKUP_PREFIX) !== 0) continue; // never touch files the owner put there
+    if (f.getDateCreated() < cutoff) { f.setTrashed(true); removed++; } else kept++;
+  }
+
+  // a second owner keeps access to the data, the backups and the photos if the main account is lost
+  const second = (settings()[SETTING.secondOwner] || {}).value;
+  if (second) {
+    [ss().getId()].forEach(function (id) { try { DriveApp.getFileById(id).addEditor(second); } catch (e) { /* already shared or policy */ } });
+    [folder, photoFolder()].forEach(function (f) { try { f.addEditor(second); } catch (e) { /* already shared or policy */ } });
+  }
+
+  setSetting(SETTING.lastBackup, now);
+  return { at: now.getTime(), url: copy.getUrl(), kept: kept, removed: removed };
+}
+
+function systemStatus() {
+  const last = settings()[SETTING.lastBackup];
+  let used = null, limit = null;
+  try { used = DriveApp.getStorageUsed(); limit = DriveApp.getStorageLimit(); } catch (e) { /* not available */ }
+  const t = last && last.value ? new Date(last.value).getTime() : null;
+  return { lastBackup: t && !isNaN(t) ? t : null, driveUsed: used, driveLimit: limit, secondOwner: !!((settings()[SETTING.secondOwner] || {}).value) };
 }
 
 function withLock(fn) {
@@ -461,8 +514,11 @@ const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast?latitude=33.2375&lon
 
 /** להריץ פעם אחת מהעורך: מתקין טריגר יומי ב-06:00 לעדכון מזג האוויר. */
 function installTriggers() {
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'weatherDigest') ScriptApp.deleteTrigger(t); });
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (['weatherDigest', 'backupNow'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t);
+  });
   ScriptApp.newTrigger('weatherDigest').timeBased().everyDays(1).atHour(6).create();
+  ScriptApp.newTrigger('backupNow').timeBased().everyDays(1).atHour(2).create();
 }
 
 function weatherDigest() {
