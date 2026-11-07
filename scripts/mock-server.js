@@ -1,4 +1,4 @@
-// Serves docs/ and mocks the Apps Script API so the site can be exercised without Google.
+// Serves docs/ and mocks the server API so the site can be exercised without Google.
 // node scripts/mock-server.js [port]
 const http = require('http');
 const fs = require('fs');

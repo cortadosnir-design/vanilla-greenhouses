@@ -167,6 +167,7 @@ assert.strictEqual(res.status, 200);
 assert.match(await res.text(), /מחובר/);
 assert.strictEqual(kv.get('refresh_token'), 'R-cortado.snir@gmail.com');
 assert.strictEqual((await (await get('/')).json()).connected, true);
+assert.match(await (await get('/privacy')).text(), /פרטית/);
 
 // ---- codes ----
 assert.strictEqual((await call({ action: 'bootstrap', code: 'nope' })).error, 'קוד שגוי');
