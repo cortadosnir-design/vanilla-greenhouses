@@ -40,7 +40,7 @@
     worker: store.get('worker', ''),
     gh: store.get('gh', ''),
     active: store.get('active', null),
-    shift: store.get('shift', null),
+    shift: null, // the work day is no longer clocked separately; a greenhouse visit is the unit of work
     dash: null,
     range: store.get('range', '30'),
     issue: { gh: '', cat: '', sev: 'בינונית' },
@@ -302,7 +302,6 @@
     $('signOutBtn').textContent = state.me ? 'התנתקות · ' + state.me.name : '';
     $('who').textContent = state.worker || 'מי מדווח?';
     renderWeatherStrip();
-    renderShift();
     renderDay();
     renderMyTasks();
     $('outBtn').disabled = !state.active;
@@ -338,7 +337,6 @@
     const w = workBy($('workSel').value);
     const warehouse = w.location === WAREHOUSE;
     const gh = warehouse ? { id: WAREHOUSE, name: WAREHOUSE } : ghs().find((g) => g.id === state.gh);
-    if (!state.shift) startShift();
     const active = { id: uid('L'), gh: gh.id, ghName: gh.name, work: w.code, workName: w.name, unit: w.unit, start: Date.now() };
     state.active = active;
     store.set('active', active);
@@ -416,47 +414,6 @@
     const hrs = VG.hoursText((ts - a.start) / 3600000);
     toast(sent ? `היציאה נרשמה · ${hrs} שעות` : `היציאה נשמרה במכשיר · ${hrs} שעות`);
   };
-
-  // ---------- attendance clock ----------
-  function startShift() {
-    const shift = { id: uid('S'), start: Date.now(), who: state.worker };
-    if (!queuePut('shiftIn', { id: shift.id, worker: state.worker, ts: shift.start })) { toast('אין מקום במכשיר'); return false; }
-    state.shift = shift;
-    store.set('shift', shift);
-    journal({ t: shift.start, who: state.worker, kind: 'start' });
-    flush();
-    return true;
-  }
-  $('shiftInBtn').onclick = () => {
-    if (!state.worker) return pickWorker();
-    if (startShift()) { renderReport(); toast('כניסה לעבודה נרשמה · ' + hhmm(state.shift.start)); }
-  };
-  $('shiftOutBtn').onclick = async () => {
-    if (state.active) { toast('קודם צריך לצאת מהחממה'); return; }
-    const sh = state.shift, ts = Date.now();
-    if (!queuePut('shiftOut', { id: sh.id, ts })) { toast('אין מקום במכשיר'); return; }
-    journal({ t: ts, who: sh.who, kind: 'end', mins: Math.round((ts - sh.start) / 60000) });
-    state.shift = null;
-    store.del('shift');
-    renderReport();
-    const sent = await flush();
-    toast((sent ? 'יציאה מהעבודה נרשמה' : 'היציאה נשמרה במכשיר') + ' · ' + VG.hoursText((ts - sh.start) / 3600000) + ' שעות היום');
-  };
-
-  let shiftTick;
-  function renderShift() {
-    const sh = state.shift;
-    $('shiftBar').classList.toggle('on', !!sh);
-    $('shiftInBtn').disabled = !!sh;
-    $('shiftOutBtn').disabled = !sh;
-    clearInterval(shiftTick);
-    if (!sh) { $('shiftStatus').textContent = 'לא בעבודה'; $('shiftTimer').textContent = ''; return; }
-    const long = Date.now() - sh.start > LONG_SHIFT;
-    $('shiftStatus').textContent = 'בעבודה מ-' + hhmm(sh.start) + (dayKey(sh.start) !== dayKey(Date.now()) ? ' (' + fmtDate(sh.start) + ')' : '') + (long ? ' · שכחת לצאת?' : '');
-    const draw = () => { $('shiftTimer').textContent = VG.hoursText((Date.now() - sh.start) / 3600000); };
-    draw();
-    shiftTick = setInterval(draw, 30000);
-  }
 
   function renderDay() {
     const items = todayItems();
@@ -642,11 +599,17 @@
     $('ghCards').innerHTML = d.greenhouses.map((g) => {
       const late = due.filter((x) => x.gh === g.name).length;
       const iss = openIssues.filter((r) => r['חממה'] === g.name).length;
-      return `<div class="gh"><h3>${esc(g.name)}</h3><dl>
+      // the greenhouse's own facts from Master Data, the headline ones on the card and all of them behind a tap
+      const info = g.info || [];
+      const fact = (re) => (info.find(([k]) => re.test(k)) || [])[1];
+      const head = [[fact(/סה"כ צמחים/), 'צמחים'], [fact(/שטח/), 'מ"ר'], [fact(/מספר שורות/), 'שורות'], [fact(/נטיעה/), '']]
+        .filter(([v]) => v).map(([v, u]) => `<span>${esc(u ? v + ' ' + u : 'נטיעה ' + v)}</span>`).join('');
+      const all = info.length ? `<details class="gh-info"><summary>נתוני החממה</summary><dl>${info.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>` : '';
+      return `<div class="gh"><h3>${esc(g.name)}</h3>${head ? `<p class="facts">${head}</p>` : ''}<dl>
         <dt>טיפול אחרון</dt><dd>${VG.relDay(VG.lastVisit(d.log, g.name), now)}</dd>
         <dt>עבודות שמגיעות</dt><dd class="${late ? 'late' : ''}">${late}</dd>
         <dt>בעיות פתוחות</dt><dd class="${iss ? 'late' : ''}">${iss}</dd>
-        <dt>שעות</dt><dd>${VG.hoursText(hoursByGh[g.name] || 0)}</dd></dl></div>`;
+        <dt>שעות</dt><dd>${VG.hoursText(hoursByGh[g.name] || 0)}</dd></dl>${all}</div>`;
     }).join('');
 
     renderJourney(d, R, now);
@@ -687,16 +650,15 @@
   // who is in the greenhouse right now (one worker on the farm, so one line)
   function renderNow(d, now) {
     const byStart = (a, b) => (b['כניסה'] || 0) - (a['כניסה'] || 0);
-    const shift = (d.attendance || []).filter((r) => r['סטטוס'] === 'פתוח').sort(byStart)[0];
     const visit = d.log.filter((r) => r['סטטוס'] === 'פתוח' && isWork(r)).sort(byStart)[0];
-    const who = (visit && visit['עובד']) || (shift && shift['עובד']) || (d.workers || [])[0] || '';
+    const who = (visit && visit['עובד']) || (d.workers || [])[0] || '';
     const el = $('nowCard');
     const avatar = `<span class="avatar" aria-hidden="true">${esc(String(who).slice(0, 1))}</span>`;
-    if (visit || shift) {
-      const since = (visit || shift)['כניסה'];
+    if (visit) {
+      const since = visit['כניסה'];
       const forgot = now - since > LONG_SHIFT ? ' · שכח לצאת?' : '';
       el.className = 'now in';
-      el.innerHTML = `${avatar}<div class="main"><strong>${esc(who)} ${visit ? 'ב' + esc(visit['חממה']) : 'בעבודה'}</strong><span class="sub">${visit ? esc(visit['עבודה'] || '') + ' · ' : ''}מ-${hhmm(since)}${forgot}</span></div><span class="clock">${VG.hoursText((now - since) / 3600000)}</span>`;
+      el.innerHTML = `${avatar}<div class="main"><strong>${esc(who)} ב${esc(visit['חממה'])}</strong><span class="sub">${esc(visit['עבודה'] || '')} · מ-${hhmm(since)}${forgot}</span></div><span class="clock">${VG.hoursText((now - since) / 3600000)}</span>`;
     } else {
       const last = d.log.filter((r) => isWork(r) && r['כניסה']).sort(byStart)[0];
       el.className = 'now';
@@ -1249,7 +1211,10 @@
   function showApp() {
     $('gate').hidden = true;
     $('app').hidden = false;
+    // a worker's Google account has no dashboard; a manager opens on it
+    $('dashTab').hidden = !!state.session && state.role !== 'manager';
     renderReport();
+    if (state.role === 'manager') showTab('dash');
     renderPending();
     if (!state.worker && workerList().length > 1) pickWorker();
     flush();

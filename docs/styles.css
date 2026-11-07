@@ -224,6 +224,10 @@ main { padding-block: 0 calc(96px + env(safe-area-inset-bottom, 0px)); padding-l
 .gh dt { color: var(--text-2); }
 .gh dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .gh .late { color: var(--danger); }
+.gh .facts { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 10px; color: var(--text-2); font-size: 14px; }
+.gh-info { margin-top: 10px; border-top: 0.5px solid var(--sep); padding-top: 8px; }
+.gh-info summary { cursor: pointer; color: var(--accent); font-size: 14px; font-weight: 600; }
+.gh-info dl { margin-top: 8px; }
 
 .list { list-style: none; margin: 0; padding: 0; }
 .list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 0.5px solid var(--sep); }

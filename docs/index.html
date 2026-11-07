@@ -80,6 +80,10 @@
 
 <div id="app" hidden>
   <nav class="tabs" aria-label="ניווט ראשי">
+    <button type="button" data-tab="dash" id="dashTab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      <span>דשבורד</span>
+    </button>
     <button type="button" data-tab="report" aria-current="page">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 21c-4-3-7-6.5-7-10.5C5 6.4 8 3 12 3s7 3.4 7 7.5c0 4-3 7.5-7 10.5z"/><path d="M12 7v5l3 2"/></svg>
       <span>עבודה</span>
@@ -87,10 +91,6 @@
     <button type="button" data-tab="issue">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
       <span>בעיה</span>
-    </button>
-    <button type="button" data-tab="dash">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
-      <span>דשבורד</span>
     </button>
   </nav>
 
@@ -103,19 +103,6 @@
       </header>
       <div id="pending" class="pending" hidden></div>
       <div id="wxStrip" class="wx-strip" hidden></div>
-
-      <!-- the work day: entry and exit side by side -->
-      <section class="clock-card" aria-label="יום עבודה">
-        <div id="shiftBar" class="shift-line">
-          <span class="dot" aria-hidden="true"></span>
-          <span id="shiftStatus">לא בעבודה</span>
-          <time id="shiftTimer" class="shift-timer" aria-label="זמן בעבודה היום"></time>
-        </div>
-        <div class="pair">
-          <button type="button" id="shiftInBtn" class="btn primary">כניסה לעבודה</button>
-          <button type="button" id="shiftOutBtn" class="btn">יציאה מהעבודה</button>
-        </div>
-      </section>
 
       <div id="idle" class="stack">
         <div id="ghSeg" class="seg" role="radiogroup" aria-label="חממה"></div>
