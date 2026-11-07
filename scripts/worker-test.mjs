@@ -32,6 +32,7 @@ const before = JSON.stringify(tabs);
 const sheetIds = Object.fromEntries(Object.keys(tabs).map((n, i) => [n, 100 + i]));
 const byId = Object.fromEntries(Object.entries(sheetIds).map(([n, id]) => [id, n]));
 const formulas = {}, formats = {};
+const links = {}; // cell -> the link of each line, as written
 const files = [{ id: 'B-OLD', name: 'גיבוי חממות וניל 2026-09-01 02:00', parents: ['BACKUPS-folder-1234'], createdTime: '2026-09-01T00:00:00Z' },
   { id: 'MINE', name: 'מסמך של הבעלים', parents: ['BACKUPS-folder-1234'], createdTime: '2020-01-01T00:00:00Z' }];
 const perms = [], created = [], patches = [];
@@ -103,6 +104,7 @@ globalThis.fetch = async (input, opt = {}) => {
         const cell = r.updateCells ? x.rows[0].values[0] : x.cell;
         if (r.updateCells) {
           const v = cell.userEnteredValue || {};
+          links[t + '!' + i + ',' + j] = cell.textFormatRuns ? cell.textFormatRuns.map((x) => x.format.link.uri) : undefined;
           tabs[t][i] = tabs[t][i] || [];
           tabs[t][i][j] = 'numberValue' in v ? v.numberValue : 'stringValue' in v ? v.stringValue : '';
           if (v.formulaValue) formulas[t + '!' + i + ',' + j] = v.formulaValue;
@@ -298,6 +300,10 @@ assert.match((await call({ action: 'photo', code: M, id: 'P-404', idx: 0, photo:
 // the worker photographs during a visit: the link goes into that visit's row, the file is named by its entry time
 assert.strictEqual((await call({ action: 'photo', code: W, id: 'P-1', idx: 5, photo: jpg })).error, 'נדרשת הרשאת מנהל', 'a worker cannot add to a photo set');
 assert.ok((await call({ action: 'photo', code: W, id: 'L-1', idx: 0, photo: jpg })).ok);
+{
+  const r = log.find((x) => x[logCol('מזהה')] === 'L-1'), c = logCol('חומרים / תמונות');
+  assert.deepStrictEqual(links['Log data!' + log.indexOf(r) + ',' + c], String(r[c]).split('\n'), 'every photo line in the cell is a clickable link');
+}
 const visitRow = log.find((r) => r[logCol('מזהה')] === 'L-1');
 assert.match(visitRow[logCol('חומרים / תמונות')], /^https:\/\/drive\.google\.com\/file\/d\/F\d+\/view/, 'link in the visit row');
 const visitFile = files.filter((f) => f.mimeType === 'image/jpeg').pop();
