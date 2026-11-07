@@ -531,7 +531,12 @@ function plain(r) {
 function greenhouseList(db) {
   const head = db.raw.greenhouses[0] || [];
   if (String(head[0] || '').trim() === 'סעיף / מאפיין') {
-    return head.slice(1).map((n, i) => ({ id: 'GH' + (i + 1), name: String(n).trim() })).filter((x) => x.name);
+    // every other row of Master Data is a fact about the greenhouse in that column (area, plants, variety...)
+    const rows = db.raw.greenhouses.slice(1).filter((r) => String(r[0] || '').trim());
+    return head.slice(1).map((n, i) => ({
+      id: 'GH' + (i + 1), name: String(n).trim(),
+      info: rows.map((r) => [String(r[0]).trim(), r[i + 1] == null ? '' : String(r[i + 1]).trim()]).filter((x) => x[1]),
+    })).filter((x) => x.name);
   }
   return db.t.greenhouses.rows.filter((r) => String(r['פעילה'] || r['פעיל'] || 'כן').trim() !== 'לא').map((r) => ({ id: String(r['מזהה']), name: String(r['שם']) }));
 }
