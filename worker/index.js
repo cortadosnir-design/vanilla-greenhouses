@@ -59,7 +59,12 @@ export default {
     if (url.pathname === '/connect') return connect(url, env);
     if (url.pathname === '/oauth') return oauth(url, env);
     if (url.pathname === '/privacy') return page('מעקב חממות וניל היא אפליקציה פרטית של משק הוניל בקיבוץ שניר. היא קוראת וכותבת רק בקובץ הגיליון של המשק ובתיקיות שלו ב-Google Drive, ולא מעבירה נתונים לאף אחד אחר.');
-    if (request.method !== 'POST') return json({ ok: true, app: 'vanilla-greenhouses', connected: !!(await env.STORE.get('refresh_token')) });
+    if (request.method !== 'POST') {
+      // health check: yes/no only, never data
+      const connected = !!(await env.STORE.get('refresh_token'));
+      const sheet = connected && (await g(env, DRIVE + 'files/' + env.SHEET_ID + '?fields=id').then(() => true, () => false));
+      return json({ ok: true, app: 'vanilla-greenhouses', connected, sheet });
+    }
     return json(await api(request, env));
   },
   async scheduled(event, env, ctx) {
@@ -77,7 +82,7 @@ async function api(request, env) {
     if (MANAGER_ONLY.includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
     const fn = Object.hasOwn(ACTIONS, String(req.action)) ? ACTIONS[req.action] : null; // never inherited keys like "constructor"
     if (!fn) return { ok: false, error: 'פעולה לא מוכרת: ' + req.action };
-    return { ok: true, role, data: await fn(await load(env), req, role) };
+    return { ok: true, role, data: await fn(await load(env, ACTION_TABS[req.action]), req, role) };
   } catch (err) {
     // retry: the phone keeps the report in its queue and sends it again later, instead of dropping it
     if (err && err.google) console.error(err.google);
@@ -196,10 +201,27 @@ function local(ms) {
   return p;
 }
 
-/** Israel minus UTC, in ms, at that moment. */
-function offset(ms) {
+/** Israel minus UTC at that moment, in ms (Intl is slow, so it is asked only twice a year). */
+function intlOffset(ms) {
   const p = local(ms);
   return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+}
+const dstYears = new Map();
+/** The year's standard and summer offsets, and when summer time starts and ends (found once, to the minute). */
+function dstYear(y) {
+  let info = dstYears.get(y);
+  if (info) return info;
+  const jan = Date.UTC(y, 0, 1), jul = Date.UTC(y, 6, 1), next = Date.UTC(y + 1, 0, 1);
+  const std = intlOffset(jan), dst = intlOffset(jul);
+  // first minute in (lo, hi] whose offset is `want`; the offset changes once in that span
+  const edge = (lo, hi, want) => { while (hi - lo > 60000) { const mid = Math.floor((lo + hi) / 120000) * 60000; if (intlOffset(mid) === want) hi = mid; else lo = mid; } return hi; };
+  info = std === dst ? { std, dst, start: Infinity, end: -Infinity } : { std, dst, start: edge(jan, jul, dst), end: edge(jul, next, std) };
+  dstYears.set(y, info);
+  return info;
+}
+function offset(ms) {
+  const i = dstYear(new Date(ms).getUTCFullYear());
+  return ms >= i.start && ms < i.end ? i.dst : i.std;
 }
 
 function toSerial(ms) { return (ms + offset(ms)) / DAY + 25569; }
@@ -238,10 +260,27 @@ function exitAfter(hit, ts) {
 const quote = (n) => "'" + n.replace(/'/g, "''") + "'";
 let sheetIdCache = null;
 
-/** Everything the app reads, in two calls: the tab ids and all five tabs at once. */
-async function load(env) {
-  const keys = Object.keys(SHEET_NAMES);
+// The tabs each action reads; anything not listed reads all of them. Log data grows every day, so it is read only when needed.
+const ACTION_TABS = {
+  bootstrap: ['greenhouses', 'works', 'tasks', 'settings'],
+  taskAdd: ['greenhouses', 'tasks', 'settings'],
+  taskDone: ['tasks', 'settings'],
+  checkIn: ['greenhouses', 'works', 'log', 'settings'],
+  checkOut: ['log', 'settings'],
+  shiftIn: ['log', 'settings'],
+  shiftOut: ['log', 'settings'],
+  photoSet: ['greenhouses', 'log', 'settings'],
+  photo: ['log', 'settings'],
+  issue: ['greenhouses', 'log', 'settings'],
+  resolveIssue: ['log', 'settings'],
+  stamp: [],
+};
+
+/** What an action reads, in two calls: the tab ids and the tabs at once. */
+async function load(env, only) {
+  const keys = only || Object.keys(SHEET_NAMES);
   const q = keys.map((k) => 'ranges=' + encodeURIComponent(quote(SHEET_NAMES[k]))).join('&');
+  if (!keys.length) return { env, raw: { settings: [], greenhouses: [[]] }, t: {} };
   const [ids, data] = await Promise.all([
     sheetIdCache || g(env, SHEETS_API + env.SHEET_ID + '?fields=sheets.properties(sheetId,title)').then((j) => {
       sheetIdCache = {};
@@ -250,7 +289,8 @@ async function load(env) {
     }),
     g(env, SHEETS_API + env.SHEET_ID + '/values:batchGet?' + q + '&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER'),
   ]);
-  const db = { env, raw: {}, t: {} };
+  const db = { env, raw: { settings: [], greenhouses: [[]] }, t: {} };
+  Object.keys(SHEET_NAMES).forEach((k) => { db.t[k] = table(k, [[]], ids[SHEET_NAMES[k]]); });
   keys.forEach((k, i) => {
     db.raw[k] = data.valueRanges[i].values || [[]];
     db.t[k] = table(k, db.raw[k], ids[SHEET_NAMES[k]]);
@@ -436,12 +476,21 @@ function workerList(db) {
 // ---------- actions ----------
 
 const ACTIONS = {
-  bootstrap: async (db) => ({
-    greenhouses: greenhouseList(db),
-    works: db.t.works.rows.map(workOut),
-    workers: workerList(db),
-    tasks: db.t.tasks.rows.filter((r) => r['סטטוס'] !== 'בוצע').map(plain),
-  }),
+  bootstrap: async (db) => {
+    if (!setting(db, SETTING.workers)) Object.assign(db, await load(db.env)); // no names in Code yet: take them from Log data
+    return {
+      greenhouses: greenhouseList(db),
+      works: db.t.works.rows.map(workOut),
+      workers: workerList(db),
+      tasks: db.t.tasks.rows.filter((r) => r['סטטוס'] !== 'בוצע').map(plain),
+    };
+  },
+
+  /** When the file last changed (by the app or by hand), so the phones re-read only after a change. */
+  stamp: async (db) => {
+    const f = await g(db.env, DRIVE + 'files/' + db.env.SHEET_ID + '?fields=modifiedTime,version');
+    return { v: String(f.version || f.modifiedTime) };
+  },
 
   taskAdd: async (db, req) => {
     const t = db.t.tasks;
