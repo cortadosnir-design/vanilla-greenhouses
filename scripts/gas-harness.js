@@ -8,7 +8,8 @@ const tab = (name, rows) => { const s = new Sheet(name, rows[0]); rows.slice(1).
 const time = (h, m) => new Date(1899, 11, 30, h, m);
 const isDate = (v) => Object.prototype.toString.call(v) === '[object Date]';
 
-const code = tab('Code', [[''], ['Deployment ID', 'AKfy-old'], ['URL', 'https://script.google.com/macros/s/old/exec']]);
+const W = 'WORK2468AB', M = 'MGR13579XYZ';
+const code = tab('Code', [[''], ['Deployment ID', 'AKfy-old'], ['URL', 'https://script.google.com/macros/s/old/exec'], ['קוד עובדים', W], ['קוד מנהל', M]]);
 const master = tab('Master Data', [['סעיף / מאפיין', 'חממה 1', 'חממה 2', 'חממה 3'], ['שטח החממה (מ"ר)', 50, 50, 50], ['סה"כ צמחים בחממה', 90, 90, 90]]);
 const work = tab('Work', [
   ['קוד עבודה', 'קטגוריית עבודה', 'שם העבודה / טיפול אגרוטכני', 'תיאור מפורט והנחיות ביצוע', 'עונה / שלב פנולוגי מומלץ', 'תדירות / מחזוריות'],
@@ -27,7 +28,6 @@ const snapshot = () => JSON.stringify({ code: code.rows.slice(0, 3), master: mas
 const before = snapshot();
 
 const { sandbox, drive, call } = load(main);
-const W = '1234', M = '9876';
 const logCol = (name) => log.rows[0].indexOf(name);
 const lastLog = () => log.rows[log.rows.length - 1];
 const codeRow = (k) => code.rows.find((r) => r[0] === k);
@@ -59,12 +59,27 @@ assert.strictEqual(log.rows[0].length, cols);
 assert.strictEqual(code.rows.length, codeRows);
 assert.deepStrictEqual(call({ action: 'bootstrap', code: W }).data.workers, ['דנה', 'יוסי']);
 
+// ---- codes are hashed out of the sheet ----
+const mask = codeRow('קוד עובדים')[1];
+assert.ok(!mask.includes(W) && !codeRow('קוד מנהל')[1].includes(M), 'plain codes no longer readable in the sheet');
+assert.strictEqual(codeRow('קוד מנהל')[1], mask);
+codeRow('קוד עובדים')[1] = 'NEWCODE88';           // the owner types a new code over the mask
+assert.strictEqual(call({ action: 'bootstrap', code: 'NEWCODE88' }).role, 'worker', 'new code works');
+assert.strictEqual(codeRow('קוד עובדים')[1], mask, 'and is masked again');
+assert.strictEqual(call({ action: 'bootstrap', code: W }).error, 'קוד שגוי', 'old code stops working');
+codeRow('קוד עובדים')[1] = '1234';                // too short: refused, the previous code stays
+assert.strictEqual(call({ action: 'bootstrap', code: '1234' }).error, 'קוד שגוי');
+assert.strictEqual(call({ action: 'bootstrap', code: 'NEWCODE88' }).role, 'worker', 'previous code kept');
+assert.match(codeRow('קוד עובדים')[1], /קצר מדי/);
+codeRow('קוד עובדים')[1] = W;                     // back to the code the rest of the test uses
+assert.strictEqual(call({ action: 'bootstrap', code: W }).role, 'worker');
+
 // ---- auth ----
 assert.strictEqual(call({ action: 'bootstrap', code: 'nope' }).error, 'קוד שגוי');
 assert.strictEqual(call({ action: 'dashboard', code: W }).error, 'נדרש קוד מנהל');
 
 // ---- work in a greenhouse lands in Log data under the farm's own titles ----
-const t0 = new Date(2026, 10, 8, 22, 30).getTime();
+const t0 = Date.now() - 10 * 3600000;
 assert.ok(call({ action: 'checkIn', code: W, id: 'L-1', worker: 'דנה', gh: 'GH1', work: 'W01', ts: t0 }).ok);
 assert.strictEqual(call({ action: 'checkIn', code: W, id: 'L-1', worker: 'דנה', gh: 'GH1', work: 'W01', ts: t0 }).data.duplicate, true, 'idempotent');
 assert.ok(call({ action: 'checkOut', code: W, id: 'L-1', ts: t0 + 2.5 * 3600000, qty: '120', notes: '=HYPERLINK("x")' }).ok);
@@ -92,6 +107,10 @@ assert.strictEqual(row[LOG_HEAD.indexOf('קטגוריית טיפול')], 'יום
 assert.ok(call({ action: 'shiftOut', code: W, id: 'S-1', ts: t0 + 8 * 3600000 }).ok);
 assert.strictEqual(lastLog()[logCol('סטטוס')], 'סגור');
 assert.match(call({ action: 'shiftOut', code: W, id: 'S-x', ts: t0 }).error, /לא נמצאה/);
+assert.match(call({ action: 'shiftOut', code: W, id: 'L-2', ts: t0 }).error, /לא נמצאה/, 'shiftOut only closes work days');
+assert.match(call({ action: 'shiftIn', code: W, id: 'S-2', worker: 'דנה', ts: Date.now() + 3600000 }).error, /זמן לא תקין/, 'no future times');
+assert.match(call({ action: 'shiftIn', code: W, id: 'S-2', worker: 'דנה', ts: Date.now() - 30 * 86400000 }).error, /זמן לא תקין/);
+assert.match(call({ action: 'checkIn', code: W, id: '=cmd', worker: 'דנה', gh: 'GH1', work: 'W01', ts: t0 }).error, /מזהה/, 'ids by pattern only');
 
 // ---- problem report is a Log data row; the manager resolves it ----
 const png = 'data:image/jpeg;base64,' + Buffer.from('fakejpeg').toString('base64');
@@ -108,6 +127,7 @@ assert.strictEqual(lastLog()[logCol('פתרון')], 'רוסס (מנהל)');
 call({ action: 'resolveIssue', code: M, id: 'B-1', status: 'hack' });
 assert.strictEqual(lastLog()[logCol('סטטוס')], 'פתוח', 'unknown status falls back');
 assert.match(call({ action: 'resolveIssue', code: M, id: 'L-1', status: 'טופל' }).error, /לא נמצאה/, 'only problem rows can be resolved');
+assert.match(call({ action: 'checkOut', code: W, id: 'B-1', ts: t0 }).error, /לא נמצאה/, 'checkOut cannot overwrite a problem report');
 
 // ---- photos: manager only, a Log data row with every link in "חומרים / תמונות" ----
 assert.strictEqual(call({ action: 'photoSet', code: W, id: 'P-1', gh: 'GH3', date: t0 }).error, 'נדרש קוד מנהל');
@@ -117,9 +137,12 @@ row = lastLog();
 assert.strictEqual(row[LOG_HEAD.indexOf('מספר חממה')], 'חממה 3');
 assert.strictEqual(row[LOG_HEAD.indexOf('חומרים / תמונות')].split('\n').length, 3);
 assert.strictEqual(drive.folders.length, 1, 'photo folder created once');
+assert.match(drive.files[drive.files.length - 1].blob.name, /^חממה 3 .* \(3\)\.jpg$/, 'file named by greenhouse, upload time and number');
+assert.ok(Date.now() - row[LOG_HEAD.indexOf('תאריך')].getTime() < 60000, 'row date is the upload time');
 assert.ok(codeRow('מזהה תיקיית תמונות ב-Drive')[1], 'folder id saved in Code');
 assert.match(call({ action: 'photo', code: M, id: 'P-404', idx: 0, photo: png }).error, /לא נמצאה/);
 assert.match(call({ action: 'photo', code: M, id: 'P-1', idx: 3, photo: 'garbage' }).error, /לא תקינה/);
+assert.match(call({ action: 'photo', code: M, id: 'P-1', idx: 3, photo: 'data:image/svg+xml;base64,PHN2Zz4=' }).error, /לא תקינה/, 'JPEG only');
 
 // ---- planned works go to Calendar ----
 assert.strictEqual(call({ action: 'taskAdd', code: W, id: 'T-1', gh: 'GH1', text: 'x', due: t0 }).error, 'נדרש קוד מנהל');
@@ -174,9 +197,9 @@ assert.match(sandbox.MailApp.sent[0].body, /חום של 36/);
 assert.match(sandbox.MailApp.sent[0].body, /לילה קר \(8/);
 assert.deepStrictEqual(main.getSheets().map((s) => s.getName()), tabsBefore, 'still no new tab');
 
-// ---- rate limit after 20 bad codes (last: it locks everyone out for 10 minutes) ----
-for (let i = 0; i < 20; i++) call({ action: 'bootstrap', code: 'bad' + i });
-assert.match(call({ action: 'bootstrap', code: W }).error, /יותר מדי/);
+// ---- a flood of wrong codes never locks the farm out ----
+for (let i = 0; i < 400; i++) call({ action: 'bootstrap', code: 'bad' + i });
+assert.strictEqual(call({ action: 'bootstrap', code: W }).role, 'worker', 'valid code still works after a flood');
 
 assert.strictEqual(snapshot(), before, 'existing data still untouched at the end');
 console.log('gas harness ok');
