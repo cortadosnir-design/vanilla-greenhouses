@@ -58,6 +58,12 @@ globalThis.fetch = async (input, opt = {}) => {
   const method = opt.method || 'GET';
   const body = typeof opt.body === 'string' ? opt.body : null;
   const path = decodeURIComponent(url.pathname);
+  if (url.host === 'oauth2.googleapis.com' && url.pathname === '/tokeninfo') {
+    // fake ID tokens: "a.<base64 email>.<aud>" (an "x" in place of the email means a forged or expired token)
+    const [, email, aud] = url.searchParams.get('id_token').split('.');
+    if (email === 'x') return new Response('{"error":"invalid_token"}', { status: 400 });
+    return ok({ iss: 'https://accounts.google.com', aud, email: Buffer.from(email, 'base64url').toString(), email_verified: 'true', exp: String(Math.floor(Date.now() / 1000) + 3600) });
+  }
   if (url.host === 'oauth2.googleapis.com') {
     const p = new URLSearchParams(String(opt.body));
     if (p.get('grant_type') === 'authorization_code') {
@@ -178,7 +184,7 @@ assert.strictEqual((await call({ action: 'bootstrap', code: 'nope' })).error, '�
 assert.strictEqual((await call({ action: 'bootstrap', code: '' })).error, 'קוד שגוי');
 assert.strictEqual((await call({ action: 'bootstrap', code: W })).role, 'worker');
 assert.strictEqual((await call({ action: 'bootstrap', code: M })).role, 'manager');
-assert.strictEqual((await call({ action: 'dashboard', code: W })).error, 'נדרש קוד מנהל');
+assert.strictEqual((await call({ action: 'dashboard', code: W })).error, 'נדרשת הרשאת מנהל');
 assert.strictEqual((await call({ action: 'checkIn', code: W, id: '=cmd' })).error, 'מזהה לא תקין');
 for (const action of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
   const x = await call({ action, code: W });
@@ -262,7 +268,7 @@ row = lastLog();
 assert.strictEqual(row[logCol('קוד עבודה')], 'ISSUE');
 assert.strictEqual(row[logCol('פירוט עבודה ומיקום')], 'מזיקים');
 assert.strictEqual(row[logCol('חומרה')], 'גבוהה');
-assert.strictEqual((await call({ action: 'resolveIssue', code: W, id: 'B-1', status: 'טופל' })).error, 'נדרש קוד מנהל');
+assert.strictEqual((await call({ action: 'resolveIssue', code: W, id: 'B-1', status: 'טופל' })).error, 'נדרשת הרשאת מנהל');
 assert.ok((await call({ action: 'resolveIssue', code: M, id: 'B-1', status: 'טופל', by: 'מנהל', solution: 'רוסס' })).ok);
 assert.strictEqual(lastLog()[logCol('סטטוס')], 'טופל');
 assert.strictEqual(lastLog()[logCol('פתרון')], 'רוסס (מנהל)');
@@ -273,7 +279,7 @@ assert.match((await call({ action: 'checkOut', code: W, id: 'B-1', ts: t0 })).er
 
 // ---- photos go to the farm's Drive folder, links and upload time in Log data ----
 const jpg = 'data:image/jpeg;base64,' + Buffer.from('fakejpeg').toString('base64');
-assert.strictEqual((await call({ action: 'photoSet', code: W, id: 'P-1', gh: 'GH3' })).error, 'נדרש קוד מנהל');
+assert.strictEqual((await call({ action: 'photoSet', code: W, id: 'P-1', gh: 'GH3' })).error, 'נדרשת הרשאת מנהל');
 assert.ok((await call({ action: 'photoSet', code: M, id: 'P-1', gh: 'GH3', note: 'פריחה', by: 'מנהל' })).ok);
 const pRow = log.length - 1;
 assert.strictEqual(formats['Log data!' + pRow + ',' + logCol('תאריך')], 'dd/mm/yyyy hh:mm', 'photo row shows date and time');
@@ -289,21 +295,21 @@ assert.match(photos[2].name, /^חממה 3 \d{4}-\d\d-\d\d \d\d-\d\d \(3\)\.jpg$/
 assert.ok(perms.some((p) => p.file === photos[0].id && p.type === 'anyone' && p.role === 'reader'), 'thumbnail can be shown');
 assert.match((await call({ action: 'photo', code: M, id: 'P-404', idx: 0, photo: jpg })).error, /לא נמצאה/);
 // the worker photographs during a visit: the link goes into that visit's row, the file is named by its entry time
-assert.strictEqual((await call({ action: 'photo', code: W, id: 'P-1', idx: 5, photo: jpg })).error, 'נדרש קוד מנהל', 'a worker cannot add to a photo set');
+assert.strictEqual((await call({ action: 'photo', code: W, id: 'P-1', idx: 5, photo: jpg })).error, 'נדרשת הרשאת מנהל', 'a worker cannot add to a photo set');
 assert.ok((await call({ action: 'photo', code: W, id: 'L-1', idx: 0, photo: jpg })).ok);
 const visitRow = log.find((r) => r[logCol('מזהה')] === 'L-1');
 assert.match(visitRow[logCol('חומרים / תמונות')], /^https:\/\/drive\.google\.com\/file\/d\/F\d+\/view/, 'link in the visit row');
 const visitFile = files.filter((f) => f.mimeType === 'image/jpeg').pop();
 const entry = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(t0)).replace(':', '-');
 assert.strictEqual(visitFile.name, 'חממה 1 ' + entry + ' (1).jpg', 'named by greenhouse and the visit entry time');
-assert.match((await call({ action: 'photo', code: W, id: 'S-1', idx: 0, photo: jpg })).error, /נדרש קוד מנהל/, 'not on a work day row');
+assert.match((await call({ action: 'photo', code: W, id: 'S-1', idx: 0, photo: jpg })).error, /נדרשת הרשאת מנהל/, 'not on a work day row');
 assert.match((await call({ action: 'photo', code: M, id: 'P-1', idx: 3, photo: 'garbage' })).error, /לא תקינה/);
 assert.match((await call({ action: 'photo', code: M, id: 'P-1', idx: 3, photo: 'data:image/svg+xml;base64,PHN2Zz4=' })).error, /לא תקינה/, 'JPEG only');
 assert.strictEqual(files.filter((f) => f.mimeType === 'image/jpeg').length, 4, 'nothing uploaded for refused photos');
 
 // ---- planned works go to Calendar ----
 const cal = tabs['Calendar'];
-assert.strictEqual((await call({ action: 'taskAdd', code: W, id: 'T-1', gh: 'GH1', text: 'x', due: t0 })).error, 'נדרש קוד מנהל');
+assert.strictEqual((await call({ action: 'taskAdd', code: W, id: 'T-1', gh: 'GH1', text: 'x', due: t0 })).error, 'נדרשת הרשאת מנהל');
 assert.ok((await call({ action: 'taskAdd', code: M, id: 'T-1', gh: 'GH2', work: 'W09', text: 'ניטור', due: t0 + DAY, worker: 'גרשון' })).ok);
 assert.match((await call({ action: 'taskAdd', code: M, id: 'T-2', gh: 'GH2', text: ' ', due: t0 })).error, /חסר/);
 assert.strictEqual(cal[1][2], 'חממה 2');
@@ -385,6 +391,39 @@ assert.strictEqual(bad.length, 0, 'entry stays 07:00 Israel time on every day, s
 const rep3 = await call({ action: 'report', code: M, from: Date.UTC(2023, 10, 1), to: Date.now() });
 assert.ok(rep3.ok, rep3.error);
 log.splice(startCount);
+
+// ---- Google sign-in and the users list ----
+const cred = (email, aud = 'cid') => 'a.' + Buffer.from(email).toString('base64url') + '.' + aud;
+assert.match((await call({ action: 'login', credential: cred('shahar@gmail.com') })).error, /אין הרשאה/, 'not on the list');
+assert.match((await call({ action: 'login', credential: cred('cortado.snir@gmail.com', 'other-app') })).error, /נכשלה/, 'a token issued to another app');
+assert.match((await call({ action: 'login', credential: 'a.x.cid' })).error, /נכשלה/, 'a token Google rejects');
+const own = await call({ action: 'login', credential: cred('Cortado.Snir@gmail.com') });
+assert.deepStrictEqual([own.ok, own.role], [true, 'manager'], 'the owner is always a manager');
+const S = own.data.session;
+assert.match(S, /^[a-f0-9]{64}$/);
+assert.strictEqual((await call({ action: 'bootstrap', session: S })).role, 'manager');
+assert.strictEqual((await call({ action: 'bootstrap', session: 'f'.repeat(64) })).signin, true, 'an unknown session');
+let us = (await call({ action: 'userSet', session: S, email: ' Gershon566@Gmail.com ', name: 'גרשון', role: 'worker' })).data;
+assert.deepStrictEqual(us.map((u) => u.email), ['cortado.snir@gmail.com', 'gershon566@gmail.com']);
+assert.match((await call({ action: 'userSet', session: S, email: 'nope', name: 'x', role: 'worker' })).error, /מייל/);
+assert.match((await call({ action: 'userSet', session: S, email: 'a@b.com', name: 'x', role: 'admin' })).error, /תפקיד/);
+await call({ action: 'userSet', session: S, email: 'cortado.snir@gmail.com', name: 'שניר', role: 'worker' });
+assert.deepStrictEqual((await call({ action: 'users', session: S })).data[0], { email: 'cortado.snir@gmail.com', name: 'שניר', role: 'manager', owner: true }, 'the owner keeps manager, the name changes');
+assert.match((await call({ action: 'userDel', session: S, email: 'cortado.snir@gmail.com' })).error, /בעל החשבון/);
+const gs = (await call({ action: 'login', credential: cred('gershon566@gmail.com') })).data.session;
+const gb = await call({ action: 'bootstrap', session: gs });
+assert.deepStrictEqual([gb.role, gb.name], ['worker', 'גרשון']);
+assert.strictEqual((await call({ action: 'users', session: gs })).error, 'נדרשת הרשאת מנהל', 'a worker cannot see or change users');
+assert.strictEqual((await call({ action: 'userSet', session: gs, email: 'gershon566@gmail.com', name: 'x', role: 'manager' })).error, 'נדרשת הרשאת מנהל', 'nor promote himself');
+assert.ok((await call({ action: 'shiftIn', session: gs, id: 'S-g1', worker: 'מישהו אחר', ts: Date.now() - 60000 })).ok);
+assert.strictEqual(lastLog()[logCol('עובד / מדווח')], 'גרשון', 'the name comes from the account, not from the phone');
+await call({ action: 'userSet', session: S, email: 'gershon566@gmail.com', name: 'גרשון', role: 'manager' });
+assert.strictEqual((await call({ action: 'stamp', session: gs })).role, 'manager', 'a role change applies at once');
+await call({ action: 'userDel', session: S, email: 'gershon566@gmail.com' });
+assert.strictEqual((await call({ action: 'stamp', session: gs })).signin, true, 'a removed user is out at once');
+assert.ok((await call({ action: 'logout', session: S })).ok);
+assert.strictEqual((await call({ action: 'stamp', session: S })).signin, true, 'signed out');
+log.splice(log.findIndex((r) => r[logCol('מזהה')] === 'S-g1'), 1);
 
 // ---- nothing that was there before is changed or removed ----
 const was = JSON.parse(before);

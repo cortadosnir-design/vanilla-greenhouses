@@ -38,15 +38,39 @@ const state = {
 };
 const CODES = { 1234: 'worker', 9876: 'manager' };
 const calls = [];
+// Google sign-in: the stub button sends credential "g.<email>"
+const users = { 'owner@gmail.com': { name: 'מנהל', role: 'manager', owner: true }, 'gershon@gmail.com': { name: 'גרשון', role: 'worker' } };
+const sessions = {};
+const userList = () => Object.keys(users).map((email) => Object.assign({ email }, users[email], { owner: !!users[email].owner }));
 
 function handle(req) {
-  const role = CODES[req.code];
+  if (req.action === 'login') {
+    const email = String(req.credential).slice(2);
+    if (!users[email]) return { ok: false, error: 'לחשבון ' + email + ' אין הרשאה. צריך לבקש מהמנהל להוסיף אותו' };
+    const session = 'a'.repeat(63) + Object.keys(sessions).length;
+    sessions[session] = email;
+    return { ok: true, role: users[email].role, name: users[email].name, data: { session, email, name: users[email].name, role: users[email].role } };
+  }
+  let role = CODES[req.code], name;
+  if (req.session) {
+    const u = users[sessions[req.session]];
+    if (!u) return { ok: false, error: 'אין הרשאה. צריך להיכנס שוב', signin: true };
+    role = u.role; name = u.name; req.worker = req.by = u.name;
+  }
   if (!role) return { ok: false, error: 'קוד שגוי' };
-  if (['dashboard', 'resolveIssue', 'report', 'photoSet', 'taskAdd', 'backup'].includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
+  if (['users', 'userSet', 'userDel'].includes(req.action)) {
+    if (role !== 'manager') return { ok: false, error: 'נדרשת הרשאת מנהל' };
+    calls.push(req.action);
+    if (req.action === 'userSet') users[req.email.trim().toLowerCase()] = { name: req.name, role: req.role };
+    if (req.action === 'userDel') delete users[req.email];
+    return { ok: true, role, name, data: userList() };
+  }
+  if (req.action === 'logout') { delete sessions[req.session]; return { ok: true, role, data: {} }; }
+  if (['dashboard', 'resolveIssue', 'report', 'photoSet', 'taskAdd', 'backup'].includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרשת הרשאת מנהל' };
   calls.push(req.action);
   const base = { greenhouses, works, workers };
   switch (req.action) {
-    case 'bootstrap': return { ok: true, role, data: Object.assign({ tasks: state.tasks.filter((t) => t['סטטוס'] !== 'בוצע') }, base) };
+    case 'bootstrap': return { ok: true, role, name, data: Object.assign({ tasks: state.tasks.filter((t) => t['סטטוס'] !== 'בוצע') }, base) };
     case 'checkIn':
       state.log.push({ 'מזהה': req.id, 'תאריך': req.ts, 'עובד': req.worker, 'חממה': (greenhouses.find((g) => g.id === req.gh) || { name: req.gh }).name, 'קוד עבודה': req.work, 'עבודה': (works.find((w) => w.code === req.work) || {}).name, 'כניסה': req.ts, 'יציאה': '', 'שעות': '', 'כמות': '', 'סטטוס': 'פתוח', 'תמונה': '' });
       return { ok: true, role, data: { id: req.id } };
@@ -62,7 +86,7 @@ function handle(req) {
     case 'photo': {
       const r = state.photos.find((x) => x['מזהה'] === req.id) || state.log.find((x) => x['מזהה'] === req.id) || state.issues.find((x) => x['מזהה'] === req.id);
       if (!r) return { ok: false, error: 'לא נמצאה רשומה' };
-      if (role !== 'manager' && !state.log.includes(r)) return { ok: false, error: 'נדרש קוד מנהל' }; // the worker only adds to his own visit
+      if (role !== 'manager' && !state.log.includes(r)) return { ok: false, error: 'נדרשת הרשאת מנהל' }; // the worker only adds to his own visit
       const url = 'https://drive.google.com/file/d/m-' + req.id + '-' + req.idx + '/view';
       r['תמונה'] = r['תמונה'] ? r['תמונה'] + '\n' + url : url;
       return { ok: true, role, data: { url } };
@@ -96,7 +120,7 @@ http.createServer((req, res) => {
   }
   if (req.url === '/__calls') { res.end(JSON.stringify({ calls, log: state.log, issues: state.issues, attendance: state.attendance, photos: state.photos, tasks: state.tasks })); return; }
   const url = req.url.split('?')[0];
-  if (url === '/config.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(`window.APP_CONFIG={apiUrl:'http://localhost:${PORT}/api'};`); return; }
+  if (url === '/config.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(`window.APP_CONFIG={apiUrl:'http://localhost:${PORT}/api',googleClientId:'test-client'};`); return; }
   const file = path.join(SITE, url === '/' ? 'index.html' : url);
   if (!file.startsWith(SITE) || !fs.existsSync(file)) { res.statusCode = 404; res.end('not found'); return; }
   res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');

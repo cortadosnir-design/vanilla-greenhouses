@@ -18,6 +18,12 @@ const HISTORY = { daily: { time: Array.from({ length: 31 }, (_, i) => new Date(D
   precipitation_sum: Array.from({ length: 31 }, (_, i) => (i % 9 === 0 ? 6 : 0)), relative_humidity_2m_mean: Array.from({ length: 31 }, () => 72), weather_code: Array.from({ length: 31 }, () => 2) } };
 const meteo = (r) => r.fulfill({ json: /past_days/.test(r.request().url()) ? HISTORY : WEATHER });
 // the opening scene plays on every launch; a tap skips it
+// stands in for Google's sign-in script: the button signs in as whatever email the test put in window.TEST_EMAIL
+const GSI = `window.google={accounts:{id:{initialize:function(o){window.__gsi=o},disableAutoSelect:function(){},
+  renderButton:function(el){var b=document.createElement('button');b.type='button';b.id='gsiBtn';b.textContent='Sign in with Google';
+  b.onclick=function(){window.__gsi.callback({credential:'g.'+window.TEST_EMAIL})};el.innerHTML='';el.appendChild(b)}}}};`;
+const gsi = (r) => r.fulfill({ body: GSI, contentType: 'text/javascript' });
+
 async function skipIntro(p) {
   await p.waitForSelector('#intro');
   if (!(await p.$('#intro.gone'))) await p.click('#intro').catch(() => {});
@@ -34,6 +40,7 @@ async function skipIntro(p) {
   await ctx.route('**/qrcode.min.js', (r) => r.fulfill({ path: path.join(__dirname, 'node_modules/qrcodejs2/qrcode.min.js'), contentType: 'text/javascript' }));
   await ctx.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
   await ctx.route('**/api.open-meteo.com/**', meteo);
+  await ctx.route('**/accounts.google.com/**', gsi);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   // resource failures are expected here (Drive thumbnails are unreachable, and the offline step aborts /api); JS errors are not
@@ -44,6 +51,8 @@ async function skipIntro(p) {
   assert.ok(!(await page.$('#intro.gone')), 'opening scene shows on launch');
   await page.screenshot({ path: path.join(SHOTS, '00-intro.png') });
   await skipIntro(page);
+  await page.waitForSelector('#gsiBtn');
+  await page.click('#codeBox summary');
   await page.fill('#gateCode', '0000');
   await page.click('#gateForm button[type=submit]');
   await page.waitForSelector('#gateErr:has-text("קוד שגוי")');
@@ -302,6 +311,7 @@ async function skipIntro(p) {
   const desk = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: 'he-IL', timezoneId: 'Asia/Jerusalem', colorScheme: 'dark', serviceWorkers: 'block' });
   await desk.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
   await desk.route('**/api.open-meteo.com/**', meteo);
+  await desk.route('**/accounts.google.com/**', gsi);
   const dp = await desk.newPage();
   dp.on('pageerror', (e) => errors.push('desktop pageerror: ' + e.message));
   const callsBeforeDemo = (await (await dp.request.get(BASE + '__calls')).json()).calls.length;
@@ -325,6 +335,51 @@ async function skipIntro(p) {
   await skipIntro(dp);
   await dp.waitForSelector('#gate:not([hidden])');
   assert.strictEqual(await dp.textContent('#gateErr'), '', 'leaving the demo shows the real code screen, not demo data');
+
+  // 9. Google sign-in and the users screen
+  const gp = await desk.newPage();
+  gp.on('pageerror', (e) => errors.push('google pageerror: ' + e.message));
+  await gp.goto(BASE);
+  await skipIntro(gp);
+  await gp.evaluate(() => { window.TEST_EMAIL = 'stranger@gmail.com'; });
+  await gp.click('#gsiBtn');
+  await gp.waitForSelector('#gateErr:has-text("stranger@gmail.com")');
+  await gp.evaluate(() => { window.TEST_EMAIL = 'owner@gmail.com'; });
+  await gp.click('#gsiBtn');
+  await gp.waitForSelector('#app:not([hidden])');
+  assert.ok(await gp.isHidden('#who'), 'the signed-in account reports, no worker picker');
+  assert.match(await gp.textContent('#signOutBtn'), /מנהל/);
+  await gp.click('.tabs button[data-tab=dash]');
+  await gp.waitForSelector('#ghCards .gh');
+  assert.ok(await gp.isHidden('#mgrForm'), 'a manager account opens the dashboard without a code');
+  await gp.click('.more summary');
+  await gp.click('#usersBtn');
+  await gp.waitForSelector('#uList li:has-text("gershon@gmail.com")');
+  await gp.fill('#uEmail', 'Shahar@gmail.com');
+  await gp.fill('#uName', 'שחר');
+  await gp.click('#uRole button[data-v=manager]');
+  await gp.click('#uAdd');
+  await gp.waitForSelector('#uList li:has-text("shahar@gmail.com")');
+  assert.strictEqual(await gp.inputValue('#uList select[data-role="shahar@gmail.com"]'), 'manager');
+  await gp.selectOption('#uList select[data-role="shahar@gmail.com"]', 'worker');
+  await gp.waitForTimeout(300);
+  await gp.click('#uList [data-del="gershon@gmail.com"]');
+  assert.strictEqual(await gp.textContent('#uList [data-del="gershon@gmail.com"]'), 'להסיר?', 'removing asks for a second tap');
+  await gp.click('#uList [data-del="gershon@gmail.com"]');
+  await gp.waitForSelector('#uList li:has-text("gershon@gmail.com")', { state: 'detached' });
+  await gp.screenshot({ path: path.join(SHOTS, '10-users.png') });
+  const u = (await (await gp.request.get(BASE + '__calls')).json());
+  assert.deepStrictEqual(u.calls.filter((c) => /^user/.test(c)), ['users', 'userSet', 'userSet', 'userDel']);
+  await gp.click('#usersDlg [data-close]');
+  await gp.click('.tabs button[data-tab=report]');
+  await gp.click('#signOutBtn');
+  await gp.waitForSelector('#gate:not([hidden])');
+  await gp.evaluate(() => { window.TEST_EMAIL = 'shahar@gmail.com'; });
+  await gp.click('#gsiBtn');
+  await gp.waitForSelector('#app:not([hidden])');
+  await gp.click('.tabs button[data-tab=dash]');
+  await gp.waitForSelector('#mgrNo:not([hidden])');
+  assert.ok(await gp.isHidden('#mgrForm'), 'a worker account sees "managers only", not a code box');
 
   await browser.close();
   assert.deepStrictEqual(errors, [], errors.join('\n'));
