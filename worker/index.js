@@ -68,16 +68,18 @@ export default {
 
 async function api(request, env) {
   try {
+    if (Number(request.headers.get('content-length')) > 6e6) return { ok: false, error: 'הבקשה גדולה מדי' };
     const req = JSON.parse(await request.text());
     const role = await roleFor(req.code, env);
     if (!role) return { ok: false, error: 'קוד שגוי' };
     if (req.id != null && !/^[A-Z]-[a-z0-9]{1,24}$/.test(String(req.id))) return { ok: false, error: 'מזהה לא תקין' };
     if (MANAGER_ONLY.includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
-    const fn = ACTIONS[req.action];
+    const fn = Object.hasOwn(ACTIONS, String(req.action)) ? ACTIONS[req.action] : null; // never inherited keys like "constructor"
     if (!fn) return { ok: false, error: 'פעולה לא מוכרת: ' + req.action };
     return { ok: true, role, data: await fn(await load(env), req) };
   } catch (err) {
     // retry: the phone keeps the report in its queue and sends it again later, instead of dropping it
+    if (err && err.google) console.error(err.google);
     return { ok: false, error: String((err && err.message) || err), retry: !!(err && err.retry) };
   }
 }
@@ -104,7 +106,8 @@ async function roleFor(code, env) {
 
 async function connect(url, env) {
   const state = crypto.randomUUID();
-  await env.STORE.put('oauth_state', state, { expirationTtl: 600 });
+  // one key per attempt, so repeated hits on /connect can't cancel the owner's sign-in
+  await env.STORE.put('oauth_state:' + state, '1', { expirationTtl: 600 });
   const q = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID, redirect_uri: url.origin + '/oauth', response_type: 'code', scope: SCOPES,
     access_type: 'offline', prompt: 'consent', login_hint: env.ALLOWED_EMAIL || '', state,
@@ -113,8 +116,8 @@ async function connect(url, env) {
 }
 
 async function oauth(url, env) {
-  const state = await env.STORE.get('oauth_state');
-  if (!state || url.searchParams.get('state') !== state) return page('הקישור פג תוקף. לפתוח שוב את /connect', 400);
+  const state = String(url.searchParams.get('state') || '');
+  if (!/^[\w-]{36}$/.test(state) || !(await env.STORE.get('oauth_state:' + state))) return page('הקישור פג תוקף. לפתוח שוב את /connect', 400);
   const r = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -129,7 +132,7 @@ async function oauth(url, env) {
   const email = String(jwtPayload(j.id_token).email || '').toLowerCase();
   if (!env.ALLOWED_EMAIL || email !== String(env.ALLOWED_EMAIL).toLowerCase()) return page('החשבון ' + email + ' לא מורשה. להתחבר עם ' + env.ALLOWED_EMAIL, 403);
   await env.STORE.put('refresh_token', j.refresh_token);
-  await env.STORE.delete('oauth_state');
+  await env.STORE.delete('oauth_state:' + state);
   token = null;
   return page('השרת מחובר לגוגל בתור ' + email + '. אפשר לסגור את הדף.');
 }
@@ -173,7 +176,9 @@ async function g(env, url, opt = {}) {
   try { r = await fetch(url, { ...opt, headers: { ...headers, ...opt.headers } }); } catch (e) { throw retryable('אין חיבור לגוגל'); }
   const j = r.status === 204 ? {} : await r.json().catch(() => ({}));
   if (!r.ok) {
-    const e = new Error('Google ' + r.status + ': ' + ((j.error && j.error.message) || ''));
+    // Google's own text (file ids, permissions) stays in the Worker log, never in the reply
+    const e = new Error('שגיאה בגוגל (' + r.status + ')');
+    e.google = r.status + ' ' + url.split('?')[0] + ' ' + ((j.error && j.error.message) || '');
     e.retry = r.status === 429 || r.status >= 500;
     throw e;
   }
@@ -303,7 +308,7 @@ const colA1 = (i) => { let s = ''; for (i++; i > 0; i = Math.floor((i - 1) / 26)
  */
 async function append(db, t, obj, opts = {}) {
   const values = t.head.map((h) => (h in obj ? cellValue(h, obj[h]) : ''));
-  const j = await g(db.env, SHEETS_API + db.env.SHEET_ID + '/values/' + encodeURIComponent(quote(t.name) + '!A1') + ':append?valueInputOption=RAW&insertDataOption=OVERWRITE', {
+  const j = await g(db.env, SHEETS_API + db.env.SHEET_ID + '/values/' + encodeURIComponent(quote(t.name) + '!A1') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS', {
     method: 'POST', body: JSON.stringify({ values: [values] }),
   });
   const row = Number(/!\D+(\d+)/.exec(j.updates.updatedRange)[1]);
@@ -452,6 +457,7 @@ const ACTIONS = {
     const t = db.t.tasks;
     const hit = findBy(t, 'מזהה', req.id);
     if (!hit) throw new Error('המשימה לא נמצאה');
+    if (hit['סטטוס'] === 'בוצע') return { id: req.id, duplicate: true }; // who and when stay as first written
     await setCells(db, t, hit._row, { 'סטטוס': 'בוצע', 'בוצע': Date.now(), 'בוצע ע"י': text(req.by) });
     return { id: req.id };
   },
@@ -566,6 +572,7 @@ const ACTIONS = {
 
 async function ensureFolder(db, key, name) {
   const id = setting(db, key);
+  if (id && !/^[\w-]{10,}$/.test(id)) throw new Error('מזהה תיקייה לא תקין בלשונית Code');
   if (id) return id;
   const f = await g(db.env, DRIVE + 'files?fields=id', { method: 'POST', body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' }) });
   await setSetting(db, key, f.id);
@@ -600,7 +607,7 @@ async function backupNow(db) {
   const copy = await g(env, DRIVE + 'files/' + env.SHEET_ID + '/copy?fields=id,webViewLink', {
     method: 'POST', body: JSON.stringify({ name: BACKUP_PREFIX + fmtLocal(now, true), parents: [folder] }),
   });
-  const cutoff = now - (Number(setting(db, SETTING.keepDays)) || 30) * DAY;
+  const cutoff = now - Math.max(7, Number(setting(db, SETTING.keepDays)) || 30) * DAY; // never trash this week's backups
   const list = await g(env, DRIVE + 'files?pageSize=1000&fields=files(id,name,createdTime)&q=' + encodeURIComponent("'" + folder + "' in parents and trashed=false"));
   let kept = 0, removed = 0;
   for (const f of list.files || []) {
