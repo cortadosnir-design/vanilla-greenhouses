@@ -18,6 +18,47 @@
 </head>
 <body>
 
+<div id="intro" class="intro" aria-hidden="true">
+  <svg class="scene" viewBox="0 0 360 230" role="presentation">
+    <defs>
+      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="sky-a"/><stop offset="1" class="sky-b"/></linearGradient>
+      <clipPath id="tunnel"><path d="M74 176V118a106 62 0 0 1 212 0v58z"/></clipPath>
+    </defs>
+    <rect width="360" height="230" fill="url(#sky)"/>
+    <circle class="sun" cx="300" cy="58" r="16"/>
+    <path class="hill" d="M0 160c50-26 92-30 140-14s96 10 132-6 66-16 88-6v96H0z"/>
+    <rect class="ground" y="174" width="360" height="56"/>
+    <g clip-path="url(#tunnel)">
+      <rect class="inside" x="74" y="52" width="212" height="124"/>
+      <g class="vines">
+        <path d="M100 176c6-20-6-36 2-56s-4-30 4-44"/><path d="M134 176c-6-22 6-38-2-58s4-32-2-48"/>
+        <path d="M226 176c6-20-6-36 2-56s-4-30 4-44"/><path d="M260 176c-6-22 6-38-2-58s4-32-2-48"/>
+        <g class="leaves"><ellipse cx="104" cy="140" rx="6" ry="3"/><ellipse cx="98" cy="108" rx="6" ry="3"/><ellipse cx="132" cy="126" rx="6" ry="3"/><ellipse cx="136" cy="92" rx="6" ry="3"/>
+          <ellipse cx="230" cy="140" rx="6" ry="3"/><ellipse cx="224" cy="108" rx="6" ry="3"/><ellipse cx="258" cy="126" rx="6" ry="3"/><ellipse cx="262" cy="92" rx="6" ry="3"/></g>
+        <g class="flowers"><circle cx="102" cy="122" r="3.2"/><circle cx="134" cy="106" r="3.2"/><circle cx="228" cy="122" r="3.2"/><circle cx="260" cy="106" r="3.2"/></g>
+      </g>
+    </g>
+    <path class="net" d="M74 176V118a106 62 0 0 1 212 0v58z"/>
+    <g class="ribs"><path d="M110 176V86M145 176V64M215 176V64M250 176V86"/><path d="M74 132h212"/></g>
+    <rect class="doorway" x="164" y="128" width="32" height="48" rx="2"/>
+    <rect class="door" x="164" y="128" width="32" height="48" rx="2"/>
+    <g class="farmer in"><g class="walk">
+      <path class="leg a" d="M0 0l-4 14"/><path class="leg b" d="M0 0l4 14"/>
+      <rect class="body" x="-6" y="-22" width="12" height="23" rx="5"/>
+      <circle class="head" cx="0" cy="-28" r="5"/>
+      <path class="hat" d="M-9-31h18M-5-31c0-6 10-6 10 0"/>
+    </g></g>
+    <g class="farmer out"><g class="walk">
+      <path class="leg a" d="M0 0l-4 14"/><path class="leg b" d="M0 0l4 14"/>
+      <rect class="body" x="-6" y="-22" width="12" height="23" rx="5"/>
+      <circle class="head" cx="0" cy="-28" r="5"/>
+      <path class="hat" d="M-9-31h18M-5-31c0-6 10-6 10 0"/>
+      <g class="pods"><path d="M-6-14l-14-10M-6-13l-15-6M-6-12l-14-2"/></g>
+    </g></g>
+  </svg>
+  <div class="intro-title">חממות וניל</div>
+</div>
+
 <!-- first run: farm code -->
 <div id="gate" class="gate" hidden>
   <form id="gateForm" class="stack" autocomplete="off">
@@ -35,7 +76,7 @@
   <nav class="tabs" aria-label="ניווט ראשי">
     <button type="button" data-tab="report" aria-current="page">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 21c-4-3-7-6.5-7-10.5C5 6.4 8 3 12 3s7 3.4 7 7.5c0 4-3 7.5-7 10.5z"/><path d="M12 7v5l3 2"/></svg>
-      <span>דיווח</span>
+      <span>עבודה</span>
     </button>
     <button type="button" data-tab="issue">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
@@ -43,7 +84,7 @@
     </button>
     <button type="button" data-tab="dash">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
-      <span>ניהול</span>
+      <span>דשבורד</span>
     </button>
   </nav>
 
@@ -51,43 +92,56 @@
     <!-- ===== report ===== -->
     <section id="report" class="view">
       <header class="bar">
-        <h1>דיווח</h1>
+        <h1>עבודה</h1>
         <button type="button" id="who" class="chip-btn" aria-label="החלפת עובד"></button>
       </header>
       <div id="pending" class="pending" hidden></div>
       <div id="wxStrip" class="wx-strip" hidden></div>
 
-      <div id="shiftOff" class="stack">
-        <button type="button" id="shiftInBtn" class="btn primary big">כניסה לעבודה</button>
-      </div>
-      <div id="shiftOn" class="shift" hidden>
-        <div class="shift-text"><span class="dot" aria-hidden="true"></span><span>בעבודה מ-<strong id="shiftStart"></strong></span></div>
-        <time id="shiftTimer" class="shift-timer" aria-label="זמן בעבודה היום">0:00</time>
-        <button type="button" id="shiftOutBtn" class="btn">יציאה מהעבודה</button>
-      </div>
+      <!-- the work day: entry and exit side by side -->
+      <section class="clock-card" aria-label="יום עבודה">
+        <div id="shiftBar" class="shift-line">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="shiftStatus">לא בעבודה</span>
+          <time id="shiftTimer" class="shift-timer" aria-label="זמן בעבודה היום"></time>
+        </div>
+        <div class="pair">
+          <button type="button" id="shiftInBtn" class="btn primary">כניסה לעבודה</button>
+          <button type="button" id="shiftOutBtn" class="btn">יציאה מהעבודה</button>
+        </div>
+      </section>
 
       <div id="idle" class="stack">
         <div id="ghSeg" class="seg" role="radiogroup" aria-label="חממה"></div>
         <div class="group"><select id="workSel" aria-label="עבודה"></select></div>
-        <button type="button" id="inBtn" class="btn primary big" disabled>כניסה לחממה</button>
-        <button type="button" id="installBtn" class="btn" hidden>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
-          התקנה בטלפון
-        </button>
       </div>
 
-      <div id="active" class="stack" hidden>
+      <div id="activeLive" hidden>
         <div class="live" aria-live="polite">
           <div class="state"><span class="dot" aria-hidden="true"></span><span>בחממה</span></div>
           <h2 id="liveGh"></h2>
           <p id="liveWork"></p>
           <time id="timer" class="timer" aria-label="זמן בחממה">0:00:00</time>
         </div>
+      </div>
+
+      <!-- the greenhouse: entry and exit side by side -->
+      <div class="pair big-pair">
+        <button type="button" id="inBtn" class="btn primary big" disabled>כניסה לחממה</button>
+        <button type="button" id="outBtn" class="btn danger big" disabled>יציאה מהחממה</button>
+      </div>
+
+      <div id="active" class="stack" hidden>
         <div class="group">
           <label id="qtyRow" class="field" hidden><span id="qtyUnit"></span><input id="qty" type="number" inputmode="decimal" min="0" step="any"></label>
           <textarea id="notes" rows="3" placeholder="הערות" aria-label="הערות"></textarea>
+          <label class="photo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            <span id="camLabel">צילום בחממה</span>
+            <input id="camInput" type="file" accept="image/*" multiple>
+          </label>
+          <div id="camThumbs" class="thumbs" hidden></div>
         </div>
-        <button type="button" id="outBtn" class="btn danger big">יציאה מהחממה</button>
       </div>
 
       <section id="myTasks" class="day card" aria-labelledby="myTasksTitle" hidden>
@@ -99,6 +153,10 @@
         <div class="day-head"><h2 id="dayTitle">היום שלי</h2><span id="daySum" class="sub"></span></div>
         <ol id="dayList" class="timeline"></ol>
       </section>
+      <button type="button" id="installBtn" class="btn install" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
+        התקנה בטלפון
+      </button>
     </section>
 
     <!-- ===== issue ===== -->
@@ -115,7 +173,7 @@
 
     <!-- ===== dashboard ===== -->
     <section id="dash" class="view wide" hidden>
-      <header class="bar"><h1>ניהול</h1></header>
+      <header class="bar"><h1>דשבורד</h1><span id="syncState" class="sync" aria-live="polite"></span></header>
 
       <form id="mgrForm" class="stack" hidden autocomplete="off" style="max-width:360px">
         <div class="group"><label class="field"><input id="mgrCode" type="password" inputmode="numeric" placeholder="קוד מנהל" aria-label="קוד מנהל" required></label></div>
@@ -132,21 +190,62 @@
             <button type="button" role="radio" data-range="all">הכול</button>
           </div>
           <button type="button" id="tasksBtn" class="btn primary">עבודות עתידיות <span id="tasksCount" class="count" hidden></span></button>
-          <button type="button" id="xlsBtn" class="btn">ייצוא ל-Excel</button>
-          <button type="button" id="gsBtn" class="btn">דוח Google Sheets</button>
-          <button type="button" id="qrBtn" class="btn">הדפסת QR</button>
-          <button type="button" id="backupBtn" class="btn">גיבוי עכשיו</button>
+          <details class="more">
+            <summary class="btn">דוחות וגיבוי</summary>
+            <div class="menu">
+              <button type="button" id="xlsBtn" class="btn plain">ייצוא ל-Excel</button>
+              <button type="button" id="gsBtn" class="btn plain">דוח Google Sheets</button>
+              <button type="button" id="qrBtn" class="btn plain">הדפסת QR</button>
+              <button type="button" id="backupBtn" class="btn plain">גיבוי עכשיו</button>
+            </div>
+          </details>
           <button type="button" id="refreshBtn" class="btn plain" aria-label="רענון">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg>
           </button>
         </div>
 
         <p id="sysLine" class="sys"></p>
-        <section id="wxCard" class="card wx-card" aria-label="מזג אוויר בשניר" hidden></section>
-
-        <div id="ghCards" class="ghs" style="margin-top:16px"></div>
+        <div id="nowCard" class="now" aria-live="polite"></div>
+        <section id="kpis" class="kpis" aria-label="סיכום הטווח"></section>
+        <div id="ghCards" class="ghs"></div>
 
         <div class="dash-grid">
+          <article class="card span-2 journey-card">
+            <div class="card-head"><h2>מסלול הוניל</h2><span class="sub">מהאבקה לקטיף, 8 עד 9 חודשים</span></div>
+            <div id="journey" class="journey"></div>
+          </article>
+          <article class="card span-2">
+            <div class="card-head"><h2>שעות וביקורים</h2><div id="chartLegend" class="legend"></div></div>
+            <div id="hoursChart" class="chart"></div>
+            <div id="workBars" class="bars"></div>
+          </article>
+          <article class="card"><div class="card-head"><h2>מה מתעכב</h2><span id="dueCount" class="pill late" hidden></span></div><ul id="dueList" class="list"></ul></article>
+          <article class="card"><h2>בעיות</h2><ul id="issueList" class="list"></ul></article>
+          <article class="card span-2 wx-card" id="wxCard" aria-label="מזג אוויר בשניר" hidden></article>
+          <article class="card span-2">
+            <div class="card-head"><h2>מזג האוויר מול העבודה</h2><span class="sub">טמפרטורה בשניר וביקורים בכל יום</span></div>
+            <div id="wxHistory" class="chart"></div>
+          </article>
+          <article class="card span-2">
+            <div class="card-head"><h2>גלריה</h2><div id="galGh" class="seg small" role="radiogroup" aria-label="חממה"></div></div>
+            <div id="gallery" class="gallery"></div>
+            <details class="upload-box">
+              <summary>העלאת תמונות</summary>
+              <div class="upload stack">
+                <div id="upGh" class="seg" role="radiogroup" aria-label="חממה"></div>
+                <div class="group">
+                  <input id="upNote" class="note" type="text" placeholder="הערה" aria-label="הערה">
+                  <label class="photo">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
+                    <span id="upPhotoLabel">הוספת תמונות</span>
+                    <input id="upPhoto" type="file" accept="image/*" multiple>
+                  </label>
+                  <div id="upThumbs" class="thumbs" hidden></div>
+                </div>
+                <button type="button" id="upBtn" class="btn primary" disabled>העלאת תמונות</button>
+              </div>
+            </details>
+          </article>
           <article class="card span-2">
             <h2>השוואה בין חממות</h2>
             <div class="table-wrap"><table class="compare">
@@ -155,11 +254,6 @@
             </table></div>
             <p id="compareNote" class="sub" style="margin:10px 0 0"></p>
           </article>
-          <article class="card"><h2>נוכחות היום</h2><ul id="presence" class="list"></ul></article>
-          <article class="card"><h2>מגיע היום</h2><ul id="dueList" class="list"></ul></article>
-          <article class="card"><h2>בעיות</h2><ul id="issueList" class="list"></ul></article>
-          <article class="card"><h2>שעות לפי עובד</h2><div id="workerBars" class="bars"></div></article>
-          <article class="card"><h2>תפוקה</h2><div id="yield" class="yield"></div></article>
           <article class="card span-2">
             <h2>יומן עבודה</h2>
             <div class="filters">
@@ -170,23 +264,6 @@
               <thead><tr><th>תאריך</th><th>עובד</th><th>חממה</th><th>עבודה</th><th>שעות</th><th>כמות</th><th>תמונה</th></tr></thead>
               <tbody id="logBody"></tbody>
             </table></div>
-          </article>
-          <article class="card span-2">
-            <h2>תמונות</h2>
-            <div class="upload stack">
-              <div id="upGh" class="seg" role="radiogroup" aria-label="חממה"></div>
-              <div class="group">
-                <input id="upNote" class="note" type="text" placeholder="הערה" aria-label="הערה">
-                <label class="photo">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
-                  <span id="upPhotoLabel">הוספת תמונות</span>
-                  <input id="upPhoto" type="file" accept="image/*" multiple>
-                </label>
-                <div id="upThumbs" class="thumbs" hidden></div>
-              </div>
-              <button type="button" id="upBtn" class="btn primary" disabled>העלאת תמונות</button>
-            </div>
-            <div id="photoGrid" class="photos"></div>
           </article>
         </div>
       </div>
@@ -237,6 +314,12 @@
       <li>לוחצים "הוספה". האייקון יופיע בין האפליקציות.</li>
     </ol>
   </div>
+</dialog>
+
+<dialog id="lightbox" class="lightbox" aria-labelledby="lbCap">
+  <div class="sheet-head"><h2 id="lbCap"></h2><button type="button" class="btn plain" data-close>סגירה</button></div>
+  <img id="lbImg" alt="">
+  <div class="sheet-body"><a id="lbLink" class="btn" target="_blank" rel="noopener">פתיחה ב-Drive</a></div>
 </dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>

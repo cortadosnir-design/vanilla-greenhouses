@@ -23,6 +23,21 @@
     return data;
   }
 
+  // Past days in Snir, for the dashboard (temperature, humidity, rain per day). Cached for 3 hours.
+  async function fetchHistory(days) {
+    const n = Math.max(7, Math.min(92, Math.round(days)));
+    const key = 'vg.wxhist';
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { /* ignore */ }
+    if (cached && cached.n >= n && Date.now() - cached.at < 3 * 3600000) return cached.data;
+    const j = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,relative_humidity_2m_mean,weather_code&timezone=Asia%2FJerusalem&past_days=${n}&forecast_days=1`)).json();
+    if (!j.daily) throw new Error('אין נתוני עבר');
+    const data = {};
+    j.daily.time.forEach((t, i) => { data[t] = { hi: j.daily.temperature_2m_max[i], lo: j.daily.temperature_2m_min[i], rain: j.daily.precipitation_sum[i], rh: j.daily.relative_humidity_2m_mean[i], code: j.daily.weather_code[i] }; });
+    try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), n, data })); } catch (e) { /* ignore */ }
+    return data;
+  }
+
   // WMO weather codes → icon kind + Hebrew label
   function describe(code, isDay) {
     if (code === 0) return { kind: isDay ? 'sun' : 'moon', text: 'בהיר' };
@@ -73,7 +88,7 @@
     }
   }
 
-  const api = { fetchWeather, describe, alerts, icon, LAT, LON };
+  const api = { fetchWeather, fetchHistory, describe, alerts, icon, LAT, LON };
   if (typeof module !== 'undefined') module.exports = api;
   else root.WX = api;
 })(this);

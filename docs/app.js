@@ -3,6 +3,18 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const VG = window.VG, WX = window.WX;
+
+  // ---------- opening scene: on every launch; a tap skips it, and the app loads underneath meanwhile ----------
+  (function intro() {
+    const el = $('intro');
+    if (!el) return;
+    const end = () => el.classList.add('gone');
+    const skip = () => { el.classList.add('skip'); setTimeout(end, 220); };
+    el.addEventListener('animationend', (e) => { if (e.target === el) end(); });
+    el.addEventListener('pointerdown', skip, { once: true });
+    addEventListener('keydown', skip, { once: true });
+    setTimeout(end, 3600); // in case animations never run
+  })();
   const CATEGORIES = ['מזיקים', 'מחלה', 'השקיה', 'אקלים', 'תשתית', 'אחר'];
   const SEVERITIES = ['נמוכה', 'בינונית', 'גבוהה'];
   const WAREHOUSE = 'מחסן';
@@ -236,15 +248,22 @@
   const ghs = () => (state.boot && state.boot.greenhouses) || [];
   const workBy = (code) => works().find((w) => w.code === code);
 
+  const workerList = () => (state.boot && state.boot.workers) || [];
   function renderReport() {
+    const list = workerList();
+    // one worker on the farm: he is always the one reporting
+    if (list.length === 1 && state.worker !== list[0] && !state.active && !state.shift) { state.worker = list[0]; store.set('worker', state.worker); }
+    $('who').hidden = list.length === 1;
     $('who').textContent = state.worker || 'מי מדווח?';
     renderWeatherStrip();
     renderShift();
     renderDay();
     renderMyTasks();
+    $('outBtn').disabled = !state.active;
     if (state.active) return renderActive();
     $('idle').hidden = false;
     $('active').hidden = true;
+    $('activeLive').hidden = true;
 
     radios($('ghSeg'), ghs().map((g) => ({ v: g.id, t: g.name })), state.gh, (v) => { state.gh = v; store.set('gh', v); validateIn(); });
 
@@ -265,7 +284,7 @@
     const warehouse = w && w.location === WAREHOUSE;
     $('ghSeg').hidden = !!warehouse;
     $('inBtn').textContent = warehouse ? 'התחלת עבודה' : 'כניסה לחממה';
-    $('inBtn').disabled = !w || (!warehouse && !state.gh);
+    $('inBtn').disabled = !!state.active || !w || (!warehouse && !state.gh);
   }
 
   $('inBtn').onclick = () => {
@@ -287,6 +306,9 @@
     const a = state.active;
     $('idle').hidden = true;
     $('active').hidden = false;
+    $('activeLive').hidden = false;
+    $('inBtn').disabled = true;
+    $('inBtn').textContent = a.gh === WAREHOUSE ? 'התחלת עבודה' : 'כניסה לחממה';
     $('liveGh').textContent = a.ghName;
     $('liveWork').textContent = a.workName + (Date.now() - a.start > LONG_SHIFT ? ' · כניסה ב-' + fmtDate(a.start) + ', נראה ששכחת לצאת' : '');
     $('qtyRow').hidden = !a.unit;
@@ -298,14 +320,46 @@
     draw();
     clearInterval(tick);
     tick = setInterval(draw, 1000);
+    drawCam();
   }
+
+  let camShots = []; // thumbnails of this visit, in memory only
+  function drawCam() {
+    const n = (state.active && state.active.photos) || 0;
+    $('camLabel').textContent = n ? (n === 1 ? 'תמונה אחת · עוד צילום' : `${n} תמונות · עוד צילום`) : 'צילום בחממה';
+    $('camThumbs').innerHTML = camShots.map((src, i) => `<span class="thumb"><img src="${src}" alt="תמונה ${i + 1}"></span>`).join('');
+    $('camThumbs').hidden = !camShots.length;
+    $('camInput').disabled = n >= MAX_PHOTOS;
+  }
+  $('camInput').onchange = async () => {
+    const a = state.active;
+    const files = Array.from($('camInput').files || []);
+    $('camInput').value = '';
+    if (!a) return;
+    let added = 0;
+    for (const f of files.slice(0, MAX_PHOTOS - (a.photos || 0))) {
+      let photo;
+      try { photo = await compress(f); } catch (e) { toast('לא הצלחתי לקרוא את התמונה'); continue; }
+      if (!queuePut('photo', { id: a.id, idx: a.photos || 0, photo })) { toast('אין מקום במכשיר לתמונה'); break; }
+      a.photos = (a.photos || 0) + 1;
+      store.set('active', a);
+      camShots.push(photo);
+      added++;
+    }
+    drawCam();
+    if (!added) return;
+    const sent = await flush();
+    toast(sent ? (added === 1 ? 'התמונה נשמרה בשורת הביקור' : `${added} תמונות נשמרו בשורת הביקור`) : 'התמונות נשמרו במכשיר ויעלו כשתהיה קליטה');
+  };
 
   $('outBtn').onclick = async () => {
     const a = state.active;
+    if (!a) return;
     const ts = Date.now();
     const payload = { id: a.id, ts, qty: $('qty').value, notes: $('notes').value.trim() };
     if (!queuePut('checkOut', payload)) { toast('אין מקום במכשיר'); return; }
-    journal({ t: ts, who: state.worker, kind: 'out', id: a.id, gh: a.ghName, work: a.workName, mins: Math.round((ts - a.start) / 60000), qty: payload.qty, unit: a.unit, notes: payload.notes });
+    journal({ t: ts, who: state.worker, kind: 'out', id: a.id, gh: a.ghName, work: a.workName, mins: Math.round((ts - a.start) / 60000), qty: payload.qty, unit: a.unit, notes: payload.notes, photos: a.photos || 0 });
+    camShots = [];
     clearInterval(tick);
     state.active = null;
     store.del('active');
@@ -346,12 +400,13 @@
   let shiftTick;
   function renderShift() {
     const sh = state.shift;
-    $('shiftOff').hidden = !!sh || !!state.active;
-    $('shiftOn').hidden = !sh;
+    $('shiftBar').classList.toggle('on', !!sh);
+    $('shiftInBtn').disabled = !!sh;
+    $('shiftOutBtn').disabled = !sh;
     clearInterval(shiftTick);
-    if (!sh) return;
+    if (!sh) { $('shiftStatus').textContent = 'לא בעבודה'; $('shiftTimer').textContent = ''; return; }
     const long = Date.now() - sh.start > LONG_SHIFT;
-    $('shiftStart').textContent = hhmm(sh.start) + (dayKey(sh.start) !== dayKey(Date.now()) ? ' (' + fmtDate(sh.start) + ')' : '') + (long ? ' · שכחת לצאת?' : '');
+    $('shiftStatus').textContent = 'בעבודה מ-' + hhmm(sh.start) + (dayKey(sh.start) !== dayKey(Date.now()) ? ' (' + fmtDate(sh.start) + ')' : '') + (long ? ' · שכחת לצאת?' : '');
     const draw = () => { $('shiftTimer').textContent = VG.hoursText((Date.now() - sh.start) / 3600000); };
     draw();
     shiftTick = setInterval(draw, 30000);
@@ -371,6 +426,7 @@
         case 'out': {
           const bits = [esc(e.gh), hhmm(e.t - e.mins * 60000) + '–' + hhmm(e.t), VG.hoursText(e.mins / 60)];
           if (e.qty !== '' && e.qty != null) bits.push(esc(e.qty) + ' ' + esc(e.unit || ''));
+          if (e.photos) bits.push(e.photos === 1 ? 'תמונה' : e.photos + ' תמונות');
           return `<li>${t}<div class="ev"><strong>${esc(e.work)}</strong><span class="sub">${bits.map((b) => `<bdi class="nw">${b}</bdi>`).join(' · ')}</span>${e.notes ? `<span class="sub">${esc(e.notes)}</span>` : ''}</div></li>`;
         }
         case 'issue': return `<li>${t}<div class="ev issue"><strong>דיווח בעיה: ${esc(e.cat)}</strong><span class="sub">${esc(e.gh || '')} · חומרה ${esc(e.sev)}</span></div></li>`;
@@ -493,6 +549,8 @@
       state.dash = j.data;
       $('dashBody').hidden = false;
       renderDash();
+      lastSync = Date.now();
+      markSync('');
     } catch (e) {
       toast(e instanceof NetError ? 'אין חיבור לשרת' : esc(e.message));
     } finally { $('refreshBtn').disabled = false; }
@@ -532,6 +590,8 @@
     const openIssues = d.issues.filter((r) => r['סטטוס'] !== 'טופל');
     const hoursByGh = VG.sumBy(R.log, 'חממה', 'שעות');
 
+    renderNow(d, now);
+    renderKpis(R);
     $('ghCards').innerHTML = d.greenhouses.map((g) => {
       const late = due.filter((x) => x.gh === g.name).length;
       const iss = openIssues.filter((r) => r['חממה'] === g.name).length;
@@ -542,12 +602,15 @@
         <dt>שעות</dt><dd>${VG.hoursText(hoursByGh[g.name] || 0)}</dd></dl></div>`;
     }).join('');
 
+    renderJourney(d, R, now);
+    renderHours(d, R);
     renderCompare(R, d);
-    renderPresence(d, now);
     renderUpload(d);
     renderTasks();
     renderSystem(d.system || {});
 
+    $('dueCount').hidden = !due.length;
+    $('dueCount').textContent = due.length;
     $('dueList').innerHTML = due.slice(0, 12).map((x) =>
       `<li><div class="main">${esc(x.work)}<div class="sub">${esc(x.gh)} · ${x.since === null ? 'לא בוצע מעולם' : 'בוצע ' + VG.relDay(now - x.since * VG.DAY, now) + ', כל ' + x.interval + ' ימים'}</div></div>
        ${x.late === Infinity ? '<span class="pill late">מעולם לא</span>' : x.late > 0 ? `<span class="pill late">באיחור ${x.late} ימים</span>` : '<span class="pill doing">היום</span>'}</li>`).join('')
@@ -561,29 +624,211 @@
        <span class="pill ${pillClass[r['סטטוס']] || 'open'}">${esc(r['סטטוס'] || 'פתוח')}</span></li>`;
     }).join('') || '<li class="empty">אין בעיות</li>';
 
-    const byWorker = Object.entries(VG.sumBy(R.log, 'עובד', 'שעות')).sort((a, b) => b[1] - a[1]);
-    const max = Math.max(1, ...byWorker.map((x) => x[1]));
-    $('workerBars').innerHTML = byWorker.map(([n, h]) =>
-      `<div class="row" role="img" aria-label="${esc(n)}: ${VG.hoursText(h)} שעות"><span>${esc(n)}</span><div class="track"><div class="fill" style="width:${(h / max) * 100}%"></div></div><span class="val">${VG.hoursText(h)}</span></div>`).join('')
-      || '<p class="empty">אין שעות בטווח הזה</p>';
-
-    const qty = (rows, code) => rows.filter((r) => r['קוד עבודה'] === code).reduce((a, r) => a + (Number(r['כמות']) || 0), 0);
-    $('yield').innerHTML = [['W01', 'פרחים הואבקו'], ['W11', 'תרמילים נקטפו'], ['W12', 'ק"ג מוינו']].map(([c, t]) => {
-      const cur = qty(R.log, c), prev = qty(R.prevLog, c);
-      return `<div><strong>${fmtNum(cur)}</strong><span>${t}</span>${R.prevLog.length || prev ? `<span class="delta ${cur > prev ? 'up' : cur < prev ? 'down' : 'flat'}">${deltaText(cur, prev)}</span>` : ''}</div>`;
-    }).join('');
-
     fillFilter($('fGh'), 'כל החממות', d.greenhouses.map((g) => g.name).concat(R.log.some((r) => r['חממה'] === WAREHOUSE) ? [WAREHOUSE] : []));
     fillFilter($('fWorker'), 'כל העובדים', Array.from(new Set(d.log.map((r) => r['עובד']).filter(Boolean))));
     renderLog();
-
-    const sets = (d.photos || []).filter((r) => VG.inRange(r['תאריך'], R.from, R.to));
-    const photos = sets.concat(R.log, R.issues).sort((a, b) => b['תאריך'] - a['תאריך'])
-      .flatMap((r) => VG.photoLinks(r['תמונה']).map((p) => ({ r, p }))).slice(0, 48);
-    $('photoGrid').innerHTML = photos.map(({ r, p }) =>
-      `<a href="${esc(p.url)}" target="_blank" rel="noopener"><img loading="lazy" src="${window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + p.id + '&sz=w400'}" alt="${esc((r['חממה'] || '') + ' ' + fmtDate(r['תאריך']))}"></a>`).join('')
-      || '<p class="empty">אין תמונות בטווח הזה</p>';
+    renderGallery(d, R);
+    renderWxHistory(d, R);
+    // later re-renders (the live sync) don't replay the entrance animation
+    setTimeout(() => $('dashBody').classList.add('settled'), 900);
   }
+
+  const isWork = (r) => r['קוד עבודה'] !== 'PHOTO';
+  const sumHours = (rows) => rows.reduce((a, r) => a + (Number(r['שעות']) || 0), 0);
+  const sumQty = (rows, code) => rows.filter((r) => r['קוד עבודה'] === code).reduce((a, r) => a + (Number(r['כמות']) || 0), 0);
+
+  // who is in the greenhouse right now (one worker on the farm, so one line)
+  function renderNow(d, now) {
+    const byStart = (a, b) => (b['כניסה'] || 0) - (a['כניסה'] || 0);
+    const shift = (d.attendance || []).filter((r) => r['סטטוס'] === 'פתוח').sort(byStart)[0];
+    const visit = d.log.filter((r) => r['סטטוס'] === 'פתוח' && isWork(r)).sort(byStart)[0];
+    const who = (visit && visit['עובד']) || (shift && shift['עובד']) || (d.workers || [])[0] || '';
+    const el = $('nowCard');
+    const avatar = `<span class="avatar" aria-hidden="true">${esc(String(who).slice(0, 1))}</span>`;
+    if (visit || shift) {
+      const since = (visit || shift)['כניסה'];
+      const forgot = now - since > LONG_SHIFT ? ' · שכח לצאת?' : '';
+      el.className = 'now in';
+      el.innerHTML = `${avatar}<div class="main"><strong>${esc(who)} ${visit ? 'ב' + esc(visit['חממה']) : 'בעבודה'}</strong><span class="sub">${visit ? esc(visit['עבודה'] || '') + ' · ' : ''}מ-${hhmm(since)}${forgot}</span></div><span class="clock">${VG.hoursText((now - since) / 3600000)}</span>`;
+    } else {
+      const last = d.log.filter((r) => isWork(r) && r['כניסה']).sort(byStart)[0];
+      el.className = 'now';
+      el.innerHTML = `${avatar}<div class="main"><strong>${esc(who || 'אין עובד')} לא בחממה עכשיו</strong><span class="sub">${last ? 'ביקור אחרון: ' + esc(last['חממה']) + ' · ' + VG.relDay(last['כניסה'], now) + ' ב-' + hhmm(last['כניסה']) : 'עוד לא נרשם ביקור'}</span></div>`;
+    }
+  }
+
+  function renderKpis(R) {
+    const cur = R.log.filter(isWork), prev = R.prevLog.filter(isWork);
+    const hasPrev = state.range !== 'all';
+    const tiles = [
+      { t: 'שעות בחממות', v: sumHours(cur), p: sumHours(prev), hours: true },
+      { t: 'ביקורים', v: cur.length, p: prev.length },
+      { t: 'פרחים הואבקו', v: sumQty(cur, 'W01'), p: sumQty(prev, 'W01') },
+      { t: 'תרמילים נקטפו', v: sumQty(cur, 'W11'), p: sumQty(prev, 'W11'), pod: true },
+      { t: 'ק"ג מוינו', v: sumQty(cur, 'W12'), p: sumQty(prev, 'W12'), pod: true },
+    ];
+    $('kpis').innerHTML = tiles.map((x) => {
+      const val = x.hours ? VG.hoursText(x.v) : fmtNum(x.v);
+      const diff = x.v - x.p;
+      const dt = x.hours ? (diff === 0 ? 'ללא שינוי' : (diff > 0 ? '+' : '-') + VG.hoursText(Math.abs(diff))) : deltaText(x.v, x.p);
+      return `<div class="kpi${x.pod ? ' pod' : ''}"><span class="v">${val}</span><span class="t">${x.t}</span>${hasPrev ? `<br><span class="delta ${diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat'}">${dt}</span>` : ''}</div>`;
+    }).join('');
+  }
+
+  // ---------- vanilla journey: pollinated flower, pod on the vine, ripe pod, harvested ----------
+  const STAGE_ICON = {
+    flower: '<svg viewBox="0 0 24 24" aria-hidden="true"><g style="fill:var(--flower)">' + [0, 72, 144, 216, 288].map((a) => `<ellipse cx="12" cy="6.5" rx="3" ry="5" transform="rotate(${a} 12 12)"/>`).join('') + '</g><circle cx="12" cy="12" r="2.4" fill="#9a7446"/></svg>',
+    pod: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3c3 5 4 11 3 18M12 3c2 5 3 11 2 18" fill="none" style="stroke:var(--leaf)" stroke-width="2.4" stroke-linecap="round"/></svg>',
+    ripe: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3c3 5 4 11 3 18M12 3c2 5 3 11 2 18" fill="none" stroke="#b5a332" stroke-width="2.4" stroke-linecap="round"/></svg>',
+    cured: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5c4 4 7 9 8 16M9 4c4 4 6 9 7 16M13 4c3 4 5 9 6 15" fill="none" style="stroke:var(--pod)" stroke-width="2.2" stroke-linecap="round"/></svg>',
+  };
+  const fmtMonth = (t) => new Date(t).toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+  function renderJourney(d, R, now) {
+    const M = 30.44 * VG.DAY;
+    const stage = (icon, n, label) => `<div class="stage"><span class="ico">${STAGE_ICON[icon]}</span><strong>${fmtNum(n)}</strong><span>${label}</span></div>`;
+    const rows = d.greenhouses.map((g) => {
+      const mine = d.log.filter((r) => r['חממה'] === g.name && typeof r['תאריך'] === 'number');
+      const q = (code, from, to) => mine.filter((r) => r['קוד עבודה'] === code && r['תאריך'] >= from && r['תאריך'] <= to).reduce((a, r) => a + (Number(r['כמות']) || 0), 0);
+      const pol = mine.filter((r) => r['קוד עבודה'] === 'W01' && Number(r['כמות']) > 0 && r['תאריך'] >= now - 7.5 * M).map((r) => r['תאריך']).sort((a, b) => a - b);
+      return `<div class="row"><h3>${esc(g.name)}</h3><div class="vine" role="list">
+        ${stage('flower', q('W01', R.from, R.to), 'הואבקו בטווח')}
+        ${stage('pod', q('W01', now - 7.5 * M, now), 'תרמילים בהתפתחות')}
+        ${stage('ripe', q('W01', now - 9.5 * M, now - 7.5 * M), 'מבשילים לקטיף')}
+        ${stage('cured', q('W11', R.from, R.to), 'נקטפו בטווח')}
+      </div>${pol.length ? `<p class="foot">הקטיף הבא צפוי ב${fmtMonth(pol[0] + 8 * M)}</p>` : ''}</div>`;
+    });
+    const kg = sumQty(R.log, 'W12');
+    $('journey').innerHTML = rows.join('') + `<p class="foot">${fmtNum(kg)} ק"ג מוינו במחסן בטווח. ההערכה לפי 8 עד 9 חודשים מהאבקה לקטיף, וכל פרח שהואבק נספר כתרמיל.</p>`;
+  }
+
+  // ---------- charts (SVG, newest on the left as Hebrew reads) ----------
+  function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); return [1, 2, 2.5, 5, 10].map((m) => m * p).find((m) => m >= v) || v; }
+  const chartWidth = (el) => Math.max(320, Math.round(el.clientWidth || 640));
+  function stackedBars(groups, series, aria, fmt, W) {
+    const H = 220, padL = 6, padR = 40, padT = 10, padB = 26;
+    const total = (g) => series.reduce((a, x) => a + (g.values[x.key] || 0), 0);
+    const max = niceMax(Math.max(1, ...groups.map(total)));
+    const n = Math.max(1, groups.length), bw = (W - padL - padR) / n, gap = Math.min(8, bw * 0.28);
+    const y = (v) => padT + (H - padT - padB) * (1 - v / max);
+    const step = Math.ceil(n / Math.max(3, Math.floor(W / 80)));
+    let out = '';
+    for (let i = 0; i <= 4; i++) { const v = (max * i) / 4, yy = y(v).toFixed(1); out += `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}"/><text class="axis" x="${W - padR + 6}" y="${+yy + 4}">${fmt(v)}</text>`; }
+    groups.forEach((g, i) => {
+      const x = W - padR - (i + 1) * bw + gap / 2;
+      let acc = 0;
+      series.forEach((sr) => {
+        const v = g.values[sr.key] || 0;
+        if (!v) return;
+        const y1 = y(acc + v), y0 = y(acc);
+        out += `<rect class="b" x="${x.toFixed(1)}" y="${y1.toFixed(1)}" width="${(bw - gap).toFixed(1)}" height="${Math.max(0.5, y0 - y1).toFixed(1)}" rx="2" style="fill:${sr.color}"><title>${esc(g.title)} · ${esc(sr.name)}: ${fmt(v)}</title></rect>`;
+        acc += v;
+      });
+      if (i % step === 0) out += `<text class="axis" x="${(x + (bw - gap) / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${esc(g.label)}</text>`;
+    });
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria)}">${out}</svg>`;
+  }
+
+  // the range split into days, weeks or months
+  function periods(R) {
+    const first = Math.min(R.to, ...R.log.map((r) => r['תאריך']).filter((t) => typeof t === 'number'));
+    const from = state.range === 'all' ? first : R.from;
+    const span = (R.to - from) / VG.DAY;
+    const unit = span <= 31 ? 'day' : span <= 190 ? 'week' : 'month';
+    const start = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); if (unit === 'week') d.setDate(d.getDate() - d.getDay()); if (unit === 'month') d.setDate(1); return d.getTime(); };
+    const next = (t) => { const d = new Date(t); if (unit === 'day') d.setDate(d.getDate() + 1); else if (unit === 'week') d.setDate(d.getDate() + 7); else d.setMonth(d.getMonth() + 1); return d.getTime(); };
+    const out = [];
+    for (let t = start(from); t <= R.to && out.length < 400; t = next(t)) out.push({ from: t, to: next(t) - 1, label: unit === 'month' ? new Date(t).toLocaleDateString('he-IL', { month: 'short' }) : new Date(t).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' }) });
+    return { unit, list: out };
+  }
+
+  function renderHours(d, R) {
+    const names = d.greenhouses.map((g) => g.name).concat(R.log.some((r) => r['חממה'] === WAREHOUSE) ? [WAREHOUSE] : []);
+    const series = names.map((n, i) => ({ key: n, name: n, color: n === WAREHOUSE ? 'var(--g4)' : `var(--g${Math.min(3, i + 1)})` }));
+    const P = periods(R);
+    const work = R.log.filter(isWork);
+    const unitName = { day: 'יום', week: 'שבוע', month: 'חודש' }[P.unit];
+    const groups = P.list.map((p) => {
+      const rows = work.filter((r) => r['תאריך'] >= p.from && r['תאריך'] <= p.to);
+      const values = {};
+      rows.forEach((r) => { values[r['חממה']] = (values[r['חממה']] || 0) + (Number(r['שעות']) || 0); });
+      return { label: p.label, values, title: `${unitName} ${p.label} · ${rows.length} ביקורים` };
+    });
+    const total = sumHours(work);
+    $('chartLegend').innerHTML = series.map((x) => `<span><i style="background:${x.color}"></i>${esc(x.name)}</span>`).join('');
+    $('hoursChart').innerHTML = work.length ? stackedBars(groups, series, `שעות בחממות לפי ${unitName}: סך הכול ${VG.hoursText(total)} שעות ב-${work.length} ביקורים`, (v) => VG.hoursText(v), chartWidth($('hoursChart'))) : '<p class="empty">אין ביקורים בטווח הזה</p>';
+
+    const byWork = Object.entries(VG.sumBy(work, 'עבודה', 'שעות')).filter((x) => x[0]).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const max = Math.max(1, ...byWork.map((x) => x[1]));
+    $('workBars').innerHTML = byWork.map(([n, h]) =>
+      `<div class="row" role="img" aria-label="${esc(n)}: ${VG.hoursText(h)} שעות"><span>${esc(n)}</span><div class="track"><div class="fill" style="width:${(h / max) * 100}%"></div></div><span class="val">${VG.hoursText(h)}</span></div>`).join('');
+  }
+
+  async function renderWxHistory(d, R) {
+    const el = $('wxHistory');
+    const days = state.range === 'all' ? 92 : Math.min(92, Number(state.range));
+    let h;
+    try { h = await WX.fetchHistory(days); } catch (e) { el.innerHTML = '<p class="empty">אין נתוני מזג אוויר כרגע</p>'; return; }
+    const first = !state.wxHist;
+    state.wxHist = h;
+    if (first) renderGallery(state.dash, rangeRows()); // the gallery shows each day's weather
+    const keys = Object.keys(h).sort().slice(-(days + 1));
+    const visits = {};
+    d.log.filter(isWork).forEach((r) => { if (typeof r['תאריך'] === 'number') { const k = isoDay(r['תאריך']); visits[k] = (visits[k] || 0) + 1; } });
+    const W = chartWidth(el), H = 220, padR = 40, padL = 6, padT = 26, padB = 26;
+    const temps = keys.flatMap((k) => [h[k].hi, h[k].lo]).filter((v) => v != null);
+    const lo = Math.floor(Math.min(...temps) / 5) * 5, hi = Math.ceil(Math.max(...temps) / 5) * 5 || lo + 5;
+    const n = keys.length, bw = (W - padL - padR) / n;
+    const x = (i) => W - padR - (i + 0.5) * bw;
+    const y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / Math.max(1, hi - lo));
+    let out = '';
+    for (let v = lo; v <= hi; v += 5) out += `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="axis" x="${W - padR + 6}" y="${(y(v) + 4).toFixed(1)}">${v}°</text>`;
+    keys.forEach((k, i) => {
+      const r = h[k].rain || 0;
+      if (r >= 0.5) { const bh = Math.min(40, r * 2); out += `<rect class="rain" x="${(x(i) - bw * 0.3).toFixed(1)}" y="${(H - padB - bh).toFixed(1)}" width="${(bw * 0.6).toFixed(1)}" height="${bh.toFixed(1)}"><title>${k}: גשם ${Math.round(r)} מ"מ</title></rect>`; }
+      if (visits[k]) out += `<circle class="visit" cx="${x(i).toFixed(1)}" cy="12" r="${Math.min(7, 3 + visits[k])}"><title>${k}: ${visits[k]} ביקורים</title></circle>`;
+    });
+    const line = (key, cls) => `<polyline class="${cls}" fill="none" stroke-width="2.2" stroke-linejoin="round" points="${keys.map((k, i) => h[k][key] == null ? '' : x(i).toFixed(1) + ',' + y(h[k][key]).toFixed(1)).filter(Boolean).join(' ')}"/>`;
+    out += line('hi', 'hi') + line('lo', 'lo');
+    const step = Math.ceil(n / Math.max(3, Math.floor(W / 80)));
+    keys.forEach((k, i) => { if (i % step === 0) out += `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${new Date(k + 'T12:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })}</text>`; });
+    const days30 = keys.slice(-30);
+    const avg = (key) => days30.reduce((a, k) => a + (h[k][key] || 0), 0) / Math.max(1, days30.length);
+    el.innerHTML = `<div class="legend" style="margin-bottom:8px"><span><i style="background:#d0612f"></i>מקסימום</span><span><i style="background:#3d7fb8"></i>מינימום</span><span><i style="background:var(--accent);border-radius:50%"></i>ביקורים</span><span>ממוצע לחות ${Math.round(avg('rh'))}%</span></div>` +
+      `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="טמפרטורה בשניר ב-${n} הימים האחרונים, בין ${lo} ל-${hi} מעלות, עם הביקורים בכל יום">${out}</svg>`;
+  }
+
+  // ---------- gallery: photos by day, with that day's weather ----------
+  let galGh = '';
+  function renderGallery(d, R) {
+    if (!d) return;
+    radios($('galGh'), [{ v: '', t: 'הכול' }].concat(d.greenhouses.map((g) => ({ v: g.name, t: g.name }))), galGh, (v) => { galGh = v; renderGallery(state.dash, rangeRows()); });
+    const sets = (d.photos || []).filter((r) => VG.inRange(r['תאריך'], R.from, R.to)); // the demo keeps photo sets apart
+    const items = R.log.concat(R.issues, sets).filter((r) => !galGh || r['חממה'] === galGh)
+      .flatMap((r) => VG.photoLinks(r['תמונה']).map((p) => ({ r, p, t: r['כניסה'] || r['תאריך'] })))
+      .filter((x) => typeof x.t === 'number').sort((a, b) => b.t - a.t).slice(0, 120);
+    const days = [];
+    items.forEach((x) => { const k = isoDay(x.t); const last = days[days.length - 1]; if (last && last.k === k) last.items.push(x); else days.push({ k, t: x.t, items: [x] }); });
+    const wx = state.wxHist || {};
+    $('gallery').innerHTML = days.map((day) => {
+      const w = wx[day.k];
+      const chip = w ? `<span class="sub">${Math.round(w.hi)}° / ${Math.round(w.lo)}° · לחות ${Math.round(w.rh)}%${w.rain >= 1 ? ' · גשם ' + Math.round(w.rain) + ' מ"מ' : ''}</span>` : '';
+      return `<section class="day"><h3>יום ${DAY_NAMES[new Date(day.t).getDay()]} ${fmtDate(day.t)} ${chip}</h3><div class="grid">${day.items.map(({ r, p, t }) => {
+        const cap = `${r['חממה'] || ''} · ${hhmm(t)}${r['עבודה'] ? ' · ' + r['עבודה'] : r['קטגוריה'] ? ' · ' + r['קטגוריה'] : ''}`;
+        const thumb = window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + p.id + '&sz=w400';
+        return `<button type="button" data-id="${esc(p.id)}" data-cap="${esc(cap)}"><img loading="lazy" src="${thumb}" alt="${esc(cap)}"><figcaption>${esc((r['חממה'] || '') + ' · ' + hhmm(t))}</figcaption></button>`;
+      }).join('')}</div></section>`;
+    }).join('') || '<p class="empty">אין תמונות בטווח הזה</p>';
+  }
+  $('gallery').onclick = (e) => {
+    const b = e.target.closest('button[data-id]');
+    if (!b) return;
+    const id = b.dataset.id;
+    $('lbImg').src = window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(id) + '&sz=w1600';
+    $('lbImg').alt = b.dataset.cap;
+    $('lbCap').textContent = b.dataset.cap;
+    $('lbLink').href = 'https://drive.google.com/file/d/' + encodeURIComponent(id) + '/view';
+    $('lightbox').showModal();
+  };
 
   // ---------- backup status ----------
   function renderSystem(s) {
@@ -602,6 +847,8 @@
     }
     $('sysLine').innerHTML = bits.join(' · ');
   }
+  // the reports menu closes once an action is picked
+  document.querySelector('.more .menu').addEventListener('click', (e) => { if (e.target.closest('button')) e.currentTarget.closest('details').open = false; });
   $('backupBtn').onclick = async () => {
     $('backupBtn').disabled = true;
     toast('מגבה…');
@@ -704,18 +951,6 @@
     toast(sent ? `${n} תמונות הועלו` : `${n} תמונות נשמרו ויעלו כשתהיה קליטה`);
     if (sent) loadDash();
   };
-
-  function renderPresence(d, now) {
-    const att = (d.attendance || []).filter((r) => r['תאריך'] && VG.daysBetween(r['תאריך'], now) === 0 || r['סטטוס'] === 'פתוח');
-    const inside = d.log.filter((r) => r['סטטוס'] === 'פתוח');
-    $('presence').innerHTML = att.sort((a, b) => a['כניסה'] - b['כניסה']).map((r) => {
-      const open = r['סטטוס'] === 'פתוח';
-      const where = inside.find((x) => x['עובד'] === r['עובד']);
-      const hrs = open ? (now - r['כניסה']) / 3600000 : Number(r['שעות']) || 0;
-      return `<li><div class="main">${esc(r['עובד'])}<div class="sub">${hhmm(r['כניסה'])}–${open ? 'עכשיו' : hhmm(r['יציאה'])} · ${VG.hoursText(hrs)}${where ? ' · ' + esc(where['חממה']) + ': ' + esc(where['עבודה'] || '') : ''}</div></div>
-        <span class="pill ${open ? 'done' : 'flat'}">${open ? (hrs * 3600000 > LONG_SHIFT ? 'שכח לצאת?' : 'בעבודה') : 'סיים'}</span></li>`;
-    }).join('') || '<li class="empty">אף אחד לא נכנס היום</li>';
-  }
 
   const deltaText = (cur, prev) => (cur === prev ? 'ללא שינוי' : (cur > prev ? '+' : '') + fmtNum(cur - prev));
 
@@ -896,13 +1131,45 @@
     } catch (e) { toast(esc(e.message)); }
   };
 
+  // ---------- live sync: what changes in the sheet shows up here, and what is done here reaches the sheet ----------
+  const SYNC_MS = 20000;
+  let lastSync = 0, syncing = false;
+  function markSync(cls) {
+    const el = $('syncState');
+    el.className = 'sync ' + cls;
+    el.textContent = cls === 'off' ? 'אין חיבור' : lastSync ? 'מסונכרן ' + hhmm(lastSync) : '';
+  }
+  async function sync(force) {
+    if (syncing || document.hidden || !state.code) return;
+    if (!force && Date.now() - lastSync < SYNC_MS - 1000) return;
+    syncing = true;
+    markSync('busy');
+    try {
+      await flush();
+      if (!$('dash').hidden && state.role === 'manager') {
+        const j = await api('dashboard', {});
+        if (JSON.stringify(j.data) !== JSON.stringify(state.dash)) { state.dash = j.data; $('dashBody').hidden = false; renderDash(); }
+      } else {
+        const j = await api('bootstrap', {});
+        const changed = JSON.stringify(j.data) !== JSON.stringify(state.boot);
+        state.boot = j.data; state.role = j.role;
+        store.set('boot', j.data); store.set('role', j.role);
+        if (changed) { if (state.active) renderMyTasks(); else renderReport(); }
+      }
+      lastSync = Date.now();
+      markSync('');
+    } catch (e) { markSync('off'); } finally { syncing = false; }
+  }
+  setInterval(() => sync(), SYNC_MS);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(true); });
+
   // ---------- boot ----------
   function showApp() {
     $('gate').hidden = true;
     $('app').hidden = false;
     renderReport();
     renderPending();
-    if (!state.worker && ghs().length) pickWorker();
+    if (!state.worker && workerList().length > 1) pickWorker();
     flush();
   }
 

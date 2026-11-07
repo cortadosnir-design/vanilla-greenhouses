@@ -65,7 +65,7 @@
     await new Promise((ok) => setTimeout(ok, 250));
     const role = CODES[req.code];
     if (!role) return { ok: false, error: 'קוד שגוי' };
-    if (['dashboard', 'resolveIssue', 'report', 'photoSet', 'photo', 'taskAdd', 'backup'].includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
+    if (['dashboard', 'resolveIssue', 'report', 'photoSet', 'taskAdd', 'backup'].includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
     switch (req.action) {
       case 'bootstrap': return { ok: true, role, data: Object.assign({ tasks: tasks.filter((t) => t['סטטוס'] !== 'בוצע') }, base) };
       case 'checkIn': {
@@ -85,6 +85,7 @@
       case 'photo': {
         const r = photos.find((x) => x['מזהה'] === req.id) || log.find((x) => x['מזהה'] === req.id) || issues.find((x) => x['מזהה'] === req.id);
         if (!r) return { ok: false, error: 'לא נמצאה רשומה' };
+      if (role !== 'manager' && !log.includes(r)) return { ok: false, error: 'נדרש קוד מנהל' }; // the worker only adds to his own visit
         const url = 'https://drive.google.com/file/d/demo-' + req.id + '-' + req.idx + '/view';
         r['תמונה'] = r['תמונה'] ? r['תמונה'] + '\n' + url : url;
         return { ok: true, role, data: { id: req.id, idx: req.idx, url } };
