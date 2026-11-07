@@ -1,0 +1,282 @@
+// End-to-end walk of the site against the mock server. node scripts/e2e.js (mock-server must be running on 8787)
+const { chromium, devices } = require('playwright');
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+
+const BASE = 'http://localhost:8787/';
+const SHOTS = path.join(__dirname, '..', 'shots');
+fs.mkdirSync(SHOTS, { recursive: true });
+
+const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, weather_code: 61, wind_speed_10m: 9, is_day: 1, precipitation: 0.3 },
+  daily: { time: ['2026-11-07', '2026-11-08', '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13'], weather_code: [61, 3, 0, 0, 2, 95, 45],
+    temperature_2m_max: [18.7, 22, 36, 25, 24, 20, 19], temperature_2m_min: [12, 6, 14, 13, 12, 11, 10], precipitation_sum: [14.5, 0, 0, 0, 0, 20, 0],
+    precipitation_probability_max: [100, 10, 0, 0, 20, 80, 30], wind_speed_10m_max: [12.4, 50, 10, 10, 15, 40, 10], relative_humidity_2m_max: [98, 80, 60, 70, 75, 95, 99], relative_humidity_2m_min: [86, 40, 30, 50, 55, 70, 90] } };
+
+(async () => {
+  const browser = await chromium.launch();
+  const errors = [];
+  // serviceWorkers: 'block' so ctx.route() can simulate "no reception" (a SW-controlled fetch bypasses Playwright routes)
+  const ctx = await browser.newContext({ ...devices['iPhone 13'], locale: 'he-IL', timezoneId: 'Asia/Jerusalem', acceptDownloads: true, serviceWorkers: 'block' });
+  // the sandbox cannot reach cdnjs; serve the same library versions from node_modules
+  await ctx.route('**/exceljs.min.js', (r) => r.fulfill({ path: path.join(__dirname, 'node_modules/exceljs/dist/exceljs.min.js'), contentType: 'text/javascript' }));
+  await ctx.route('**/qrcode.min.js', (r) => r.fulfill({ path: path.join(__dirname, 'node_modules/qrcodejs2/qrcode.min.js'), contentType: 'text/javascript' }));
+  await ctx.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
+  await ctx.route('**/api.open-meteo.com/**', (r) => r.fulfill({ json: WEATHER }));
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  // resource failures are expected here (Drive thumbnails are unreachable, and the offline step aborts /api); JS errors are not
+  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
+
+  // 1. gate + QR deep link
+  await page.goto(BASE + '?gh=GH2');
+  await page.fill('#gateCode', '0000');
+  await page.click('#gateForm button[type=submit]');
+  await page.waitForSelector('#gateErr:has-text("קוד שגוי")');
+  await page.screenshot({ path: path.join(SHOTS, '01-gate.png') });
+  await page.fill('#gateCode', '1234');
+  await page.click('#gateForm button[type=submit]');
+  await page.waitForSelector('#whoDlg[open]');
+  await page.screenshot({ path: path.join(SHOTS, '02-who.png') });
+  await page.click('#whoList button:has-text("דנה")');
+  assert.strictEqual(await page.textContent('#who'), 'דנה');
+  assert.strictEqual(await page.getAttribute('#ghSeg button[data-v=GH2]', 'aria-checked'), 'true', 'QR link preselects greenhouse');
+  assert.ok(await page.isDisabled('#inBtn'), 'check-in disabled until work chosen');
+  await page.waitForSelector('#wxStrip:not([hidden])');
+  assert.match(await page.textContent('#wxStrip'), /16°/);
+  await page.screenshot({ path: path.join(SHOTS, '03-report-idle.png') });
+
+  // 1b. a stale/bad greenhouse id from a QR is dropped
+  await page.goto(BASE + '?gh=GH9');
+  await page.waitForSelector('#idle:not([hidden])');
+  assert.strictEqual((await page.$$('#ghSeg [aria-checked="true"]')).length, 0, 'bad QR id not selected');
+  await page.selectOption('#workSel', 'W01');
+  assert.ok(await page.isDisabled('#inBtn'), 'no check-in without a valid greenhouse');
+  await page.click('#ghSeg button[data-v=GH2]');
+
+  // 1c. attendance clock: start the day
+  assert.ok(!(await page.isHidden('#shiftInBtn')), 'clock-in visible');
+  await page.click('#shiftInBtn');
+  await page.waitForSelector('#shiftOn:not([hidden])');
+  assert.match(await page.textContent('#dayList'), /כניסה לעבודה/);
+
+  // 2. check in
+  await page.selectOption('#workSel', 'W01');
+  assert.ok(!(await page.isDisabled('#inBtn')));
+  await page.click('#inBtn');
+  await page.waitForSelector('#active:not([hidden])');
+  assert.strictEqual(await page.textContent('#liveGh'), 'חממה 2');
+  assert.ok(!(await page.isHidden('#qtyRow')), 'qty row visible for W01');
+  assert.strictEqual(await page.textContent('#qtyUnit'), 'כמה פרחים?');
+  await page.waitForTimeout(1500);
+  assert.match(await page.textContent('#timer'), /^0:00:0[1-9]$/);
+  await page.screenshot({ path: path.join(SHOTS, '04-active.png') });
+
+  // persistence: reload keeps the session
+  await page.reload();
+  await page.waitForSelector('#active:not([hidden])');
+  assert.strictEqual(await page.textContent('#liveGh'), 'חממה 2', 'active session survives reload');
+
+  // 3. check out with qty (workers no longer upload photos)
+  assert.strictEqual(await page.$$eval('#active input[type=file]', (x) => x.length), 0, 'no photo picker for workers');
+  await page.fill('#qty', '42');
+  await page.fill('#notes', 'פרחים יפים');
+  await page.click('#outBtn');
+  await page.waitForSelector('#idle:not([hidden])');
+  await page.waitForSelector('#toast.show:has-text("היציאה")', { timeout: 30000 });
+  await page.waitForSelector('#pending', { state: 'hidden', timeout: 30000 });
+  const toast1 = await page.textContent('#toast');
+  assert.match(toast1, /היציאה נרשמה/, toast1);
+  let server = await (await page.request.get(BASE + '__calls')).json();
+  const mine = server.log[server.log.length - 1];
+  assert.strictEqual(mine['כמות'], '42');
+  assert.strictEqual(mine['סטטוס'], 'סגור');
+
+  // my day shows the finished greenhouse work with qty
+  const dayText = await page.textContent('#dayList');
+  assert.match(dayText, /האבקה ידנית של פרחים/);
+  assert.match(dayText, /42 פרחים/);
+  assert.match(await page.textContent('#daySum'), /1 עבודות/);
+  await page.screenshot({ path: path.join(SHOTS, '04c-my-day.png'), fullPage: true });
+
+  // 4. warehouse work hides greenhouse picker
+  await page.selectOption('#workSel', 'W12');
+  assert.ok(await page.isHidden('#ghSeg'));
+  assert.strictEqual(await page.textContent('#inBtn'), 'התחלת עבודה');
+
+  // 5. offline queue: block API, check in, verify pending, unblock, verify flush
+  await ctx.route('**/api', (r) => r.abort());
+  await page.selectOption('#workSel', 'W09');
+  const [failed1] = await Promise.all([page.waitForEvent('requestfailed', (r) => r.url().endsWith('/api')), page.click('#inBtn')]);
+  assert.ok(failed1, 'check-in request was blocked');
+  await page.waitForSelector('#active:not([hidden])');
+  await page.waitForSelector('#pending:not([hidden])');
+  assert.match(await page.textContent('#pending'), /ממתין/);
+  const [failed2] = await Promise.all([page.waitForEvent('requestfailed', (r) => r.url().endsWith('/api')), page.click('#outBtn')]);
+  assert.ok(failed2, 'check-out flush was blocked');
+  await page.waitForSelector('#toast.show');
+  const toast2 = await page.textContent('#toast');
+  const calls0 = await (await page.request.get(BASE + '__calls')).json();
+  assert.match(toast2, /נשמרה במכשיר/, toast2 + ' | server calls: ' + calls0.calls.join(','));
+  await page.screenshot({ path: path.join(SHOTS, '05-pending.png') });
+  await ctx.unroute('**/api');
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.waitForSelector('#pending', { state: 'hidden', timeout: 5000 });
+  server = await (await page.request.get(BASE + '__calls')).json();
+  assert.strictEqual(server.calls.filter((c) => c === 'checkIn').length, 2, 'queued check-in flushed');
+  assert.strictEqual(server.calls.filter((c) => c === 'checkOut').length, 2, 'queued check-out flushed');
+
+  // 5b. enqueue while a send is in flight: slow the API, check in and out back to back, both must arrive
+  await ctx.route('**/api', async (r) => { await new Promise((ok) => setTimeout(ok, 1200)); r.continue(); });
+  await page.selectOption('#workSel', 'W03');
+  await page.click('#inBtn');
+  await page.waitForSelector('#active:not([hidden])');
+  await page.click('#outBtn');
+  await page.waitForSelector('#idle:not([hidden])');
+  await page.waitForSelector('#pending', { state: 'hidden', timeout: 10000 });
+  await ctx.unroute('**/api');
+  server = await (await page.request.get(BASE + '__calls')).json();
+  assert.strictEqual(server.calls.filter((c) => c === 'checkIn').length, 3, 'in-flight check-in arrived');
+  assert.strictEqual(server.calls.filter((c) => c === 'checkOut').length, 3, 'check-out enqueued during the in-flight send was not lost');
+  assert.strictEqual(server.log[server.log.length - 1]['סטטוס'], 'סגור');
+
+  // clock out ends the day; server row closed
+  await page.click('#shiftOutBtn');
+  await page.waitForSelector('#shiftOff:not([hidden])');
+  await page.waitForSelector('#pending', { state: 'hidden', timeout: 10000 });
+  assert.match(await page.textContent('#dayList'), /יציאה מהעבודה/);
+  server = await (await page.request.get(BASE + '__calls')).json();
+  const myShift = server.attendance.find((a) => a['עובד'] === 'דנה' && a['מזהה'] !== 'S-1');
+  assert.ok(myShift && myShift['סטטוס'] === 'סגור', 'shift closed on server');
+
+  // 6. issue
+  await page.click('.tabs button[data-tab=issue]');
+  await page.waitForSelector('#issue:not([hidden])');
+  assert.ok(await page.isDisabled('#issueBtn'));
+  await page.click('#issueCat button[data-v=מזיקים]');
+  await page.fill('#issueDesc', 'אקריות בשורה 1');
+  assert.ok(!(await page.isDisabled('#issueBtn')));
+  await page.screenshot({ path: path.join(SHOTS, '06-issue.png') });
+  await page.click('#issueBtn');
+  await page.waitForSelector('#toast.show');
+  server = await (await page.request.get(BASE + '__calls')).json();
+  assert.strictEqual(server.issues[server.issues.length - 1]['תיאור'], 'אקריות בשורה 1');
+
+  // 7. dashboard: worker code is refused, manager code opens
+  await page.click('.tabs button[data-tab=dash]');
+  await page.waitForSelector('#mgrForm:not([hidden])');
+  await page.fill('#mgrCode', '1234');
+  await page.click('#mgrForm button[type=submit]');
+  await page.waitForSelector('#mgrErr:has-text("קוד עובדים")');
+  await page.fill('#mgrCode', '9876');
+  await page.click('#mgrForm button[type=submit]');
+  await page.waitForSelector('#dashBody:not([hidden])');
+  await page.waitForSelector('#ghCards .gh');
+  assert.strictEqual((await page.$$('#ghCards .gh')).length, 3);
+  assert.ok((await page.textContent('#dueList')).includes('חממה'), 'due list has items');
+  await page.waitForSelector('#wxCard:not([hidden])');
+  assert.ok((await page.$$('#wxCard .wx-day')).length === 7, '7 forecast days');
+  assert.match(await page.textContent('#wxCard .wx-alerts'), /חום של 36/);
+  assert.ok((await page.$$('#compareBody tr')).length === 3, 'comparison rows');
+  assert.match(await page.textContent('#presence'), /דנה/);
+  assert.ok((await page.$$('#compareBody .delta')).length >= 15, 'comparison deltas');
+  await page.click('#rangeSeg button[data-range=all]');
+  assert.strictEqual((await page.$$('#compareBody .delta')).length, 0, 'no deltas for "all"');
+  await page.click('#rangeSeg button[data-range="30"]');
+  assert.ok((await page.textContent('#issueList')).includes('אקריות'));
+  assert.ok((await page.$$('#logBody tr')).length >= 5);
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: path.join(SHOTS, '07-dash-phone.png'), fullPage: true });
+
+  // comparison has a date column before hours
+  assert.strictEqual(await page.textContent('table.compare thead th:nth-child(2)'), 'תאריך אחרון');
+
+  // future tasks: add one, see the count, mark one done
+  assert.strictEqual(await page.textContent('#tasksCount'), '1');
+  await page.click('#tasksBtn');
+  await page.waitForSelector('#tasksDlg[open]');
+  assert.ok(await page.isDisabled('#tAdd'));
+  await page.click('#tGh button[data-v=GH2]');
+  await page.selectOption('#tWork', 'W03');
+  await page.fill('#tDate', '2026-11-20');
+  await page.selectOption('#tWorker', 'יוסי');
+  await page.click('#tAdd');
+  await page.waitForSelector('#tList li:has-text("עיצוב לולאות")');
+  assert.strictEqual(await page.textContent('#tasksCount'), '2');
+  await page.screenshot({ path: path.join(SHOTS, '07c-tasks.png') });
+  server = await (await page.request.get(BASE + '__calls')).json();
+  const added = server.tasks.find((t) => t['עובד'] === 'יוסי');
+  assert.ok(added && added['חממה'] === 'חממה 2' && new Date(added['תאריך ביצוע']).getDate() === 20, 'task stored with date');
+  await page.click('#tList li:has-text("ניטור מזיקים") [data-done]');
+  await page.waitForFunction(() => document.querySelector('#tasksCount').textContent === '1');
+  await page.click('#tasksDlg [data-close]');
+
+  // manager photo upload: up to 20, attached to a greenhouse and date
+  const png = path.join(__dirname, '..', 'docs', 'icons', 'icon-512.png');
+  const png2 = path.join(__dirname, '..', 'docs', 'icons', 'icon-180.png');
+  assert.ok(await page.isDisabled('#upBtn'), 'upload disabled without photos');
+  await page.click('#upGh button[data-v=GH3]');
+  await page.fill('#upNote', 'פריחה ראשונה');
+  await page.setInputFiles('#upPhoto', [png, png2, png]);
+  await page.waitForFunction(() => document.querySelectorAll('#upThumbs .thumb').length === 3);
+  await page.click('#upThumbs .thumb:nth-child(2) button');
+  await page.waitForFunction(() => document.querySelectorAll('#upThumbs .thumb').length === 2);
+  assert.strictEqual(await page.textContent('#upPhotoLabel'), 'תמונות 2/20');
+  await page.setInputFiles('#upPhoto', Array(25).fill(png));
+  await page.waitForFunction(() => document.querySelectorAll('#upThumbs .thumb').length === 20, null, { timeout: 30000 });
+  assert.ok(await page.isDisabled('#upPhoto'), 'picker disabled at 20');
+  await page.locator('#upThumbs').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(SHOTS, '07b-upload.png') });
+  await page.click('#upBtn');
+  await page.waitForSelector('#toast.show:has-text("הועלו")', { timeout: 30000 });
+  server = await (await page.request.get(BASE + '__calls')).json();
+  const set = server.photos[server.photos.length - 1];
+  assert.strictEqual(set['חממה'], 'חממה 3');
+  assert.strictEqual(set['הערה'], 'פריחה ראשונה');
+  assert.strictEqual(set['תמונה'].split('\n').length, 20, 'all 20 photos reached the server');
+  await page.waitForFunction(() => document.querySelectorAll('#photoGrid img').length >= 20);
+
+  // resolve an issue
+  await page.click('#issueList button[data-id]');
+  await page.waitForSelector('#resolveDlg[open]');
+  await page.click('#resolveSeg button[data-status=טופל]');
+  await page.fill('#resolveText', 'רוסס');
+  await page.click('#resolveBtn');
+  await page.waitForSelector('#resolveDlg[open]', { state: 'hidden' });
+  server = await (await page.request.get(BASE + '__calls')).json();
+  assert.ok(server.issues.some((i) => i['פתרון'] === 'רוסס'));
+
+  // excel export downloads a real xlsx
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('#xlsBtn')]);
+  const xlsx = path.join(SHOTS, 'export.xlsx');
+  await dl.saveAs(xlsx);
+  assert.ok(fs.statSync(xlsx).size > 5000, 'xlsx has content');
+
+  // 8. desktop layout + dark mode
+  const desk = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: 'he-IL', timezoneId: 'Asia/Jerusalem', colorScheme: 'dark', serviceWorkers: 'block' });
+  await desk.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
+  await desk.route('**/api.open-meteo.com/**', (r) => r.fulfill({ json: WEATHER }));
+  const dp = await desk.newPage();
+  dp.on('pageerror', (e) => errors.push('desktop pageerror: ' + e.message));
+  const callsBeforeDemo = (await (await dp.request.get(BASE + '__calls')).json()).calls.length;
+  await dp.goto(BASE + '?demo');
+  assert.match(await dp.textContent('#gateErr'), /מצב הדגמה/);
+  await dp.fill('#gateCode', '9876');
+  await dp.click('#gateForm button[type=submit]');
+  await dp.waitForSelector('#whoDlg[open]');
+  await dp.click('#whoList button:has-text("מאור")');
+  await dp.click('.tabs button[data-tab=dash]');
+  await dp.waitForSelector('#ghCards .gh');
+  await dp.waitForTimeout(700);
+  await dp.screenshot({ path: path.join(SHOTS, '08-dash-desktop-dark.png'), fullPage: true });
+  await dp.click('#rangeSeg button[data-range=all]');
+  await dp.waitForTimeout(700);
+  await dp.screenshot({ path: path.join(SHOTS, '09-dash-desktop-all.png'), fullPage: true });
+  const demoCalls = await (await dp.request.get(BASE + '__calls')).json();
+  assert.strictEqual(demoCalls.calls.length, callsBeforeDemo, 'demo mode never hit the server');
+  await dp.goto(BASE + '?demo=off');
+
+  await browser.close();
+  assert.deepStrictEqual(errors, [], errors.join('\n'));
+  console.log('e2e ok');
+})().catch((e) => { console.error(e); process.exit(1); });
