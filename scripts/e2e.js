@@ -275,6 +275,8 @@ const WEATHER = { current: { temperature_2m: 16.4, relative_humidity_2m: 90, wea
   const demoCalls = await (await dp.request.get(BASE + '__calls')).json();
   assert.strictEqual(demoCalls.calls.length, callsBeforeDemo, 'demo mode never hit the server');
   await dp.goto(BASE + '?demo=off');
+  await dp.waitForSelector('#gate:not([hidden])');
+  assert.strictEqual(await dp.textContent('#gateErr'), '', 'leaving the demo shows the real code screen, not demo data');
 
   await browser.close();
   assert.deepStrictEqual(errors, [], errors.join('\n'));
