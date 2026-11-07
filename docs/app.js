@@ -685,18 +685,15 @@
 
   // ---------- manager photo upload ----------
   const upPicker = photoInput($('upPhoto'), $('upThumbs'), $('upPhotoLabel'), state.upPhotos, () => validateUpload());
-  function validateUpload() { $('upBtn').disabled = !(state.upGh && $('upDate').value && state.upPhotos.length); }
+  function validateUpload() { $('upBtn').disabled = !(state.upGh && state.upPhotos.length); }
   function renderUpload(d) {
     if (!state.upGh || !d.greenhouses.some((g) => g.id === state.upGh)) state.upGh = (d.greenhouses[0] || {}).id || '';
     radios($('upGh'), d.greenhouses.map((g) => ({ v: g.id, t: g.name })), state.upGh, (v) => { state.upGh = v; validateUpload(); });
-    if (!$('upDate').value) $('upDate').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     validateUpload();
   }
-  $('upDate').onchange = validateUpload;
   $('upBtn').onclick = async () => {
     const n = state.upPhotos.length;
-    const [y, m, dd] = $('upDate').value.split('-').map(Number);
-    const payload = { id: uid('P'), gh: state.upGh, date: new Date(y, m - 1, dd, 12).getTime(), note: $('upNote').value.trim(), by: state.worker || 'מנהל' };
+    const payload = { id: uid('P'), gh: state.upGh, date: Date.now(), note: $('upNote').value.trim(), by: state.worker || 'מנהל' };
     if (!queueWithPhotos('photoSet', payload, state.upPhotos)) { toast('אין מקום במכשיר לכל התמונות. הסר כמה ונסה שוב'); return; }
     state.upPhotos = [];
     upPicker.reset(state.upPhotos);

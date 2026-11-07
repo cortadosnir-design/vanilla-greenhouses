@@ -32,4 +32,5 @@ assert.strictEqual(VG.rangeStart('7', now), day(1));
 assert.strictEqual(VG.driveId('https://drive.google.com/file/d/AbC_12-x/view?usp=drivesdk'), 'AbC_12-x');
 assert.deepStrictEqual(VG.photoLinks('https://drive.google.com/file/d/A1/view\nhttps://drive.google.com/file/d/B2/view').map((x) => x.id), ['A1', 'B2']);
 assert.deepStrictEqual(VG.photoLinks(''), []);
+assert.strictEqual(VG.photoLinks('javascript:alert(1)//\/d/X9').map((x) => x.url)[0], 'https://drive.google.com/file/d/X9/view', 'links rebuilt from the id');
 console.log('logic ok');

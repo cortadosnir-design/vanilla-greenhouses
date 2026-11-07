@@ -69,7 +69,8 @@
   }
   // a cell may hold several links, one per line
   function photoLinks(cell) {
-    return String(cell || '').split(/\s+/).map((u) => ({ url: u, id: driveId(u) })).filter((x) => x.id);
+    // the link is rebuilt from the file id, so a cell can never carry a javascript: or foreign URL
+    return String(cell || '').split(/\s+/).map(driveId).filter(Boolean).map((id) => ({ id, url: 'https://drive.google.com/file/d/' + id + '/view' }));
   }
 
   const api = { DAY, startOfDay, daysBetween, dueList, inRange, sumBy, lastVisit, rangeStart, relDay, hoursText, driveId, photoLinks };
