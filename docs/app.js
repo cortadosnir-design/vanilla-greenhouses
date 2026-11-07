@@ -1,4 +1,4 @@
-/* מעקב חממות וניל — אפליקציית האתר. נתונים: Apps Script (config.js), מזג אוויר: Open-Meteo (weather.js). */
+/* מעקב חממות וניל — אפליקציית האתר. נתונים: השרת ב-Cloudflare (config.js), מזג אוויר: Open-Meteo (weather.js). */
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
@@ -47,13 +47,13 @@
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), action === 'checkOut' || action === 'issue' ? 60000 : 20000);
       try {
-        // text/plain body keeps it a "simple" request, so Apps Script needs no CORS preflight
+        // text/plain body keeps it a "simple" request, with no CORS preflight
         res = await fetch(window.APP_CONFIG.apiUrl, { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal });
       } catch (e) { throw new NetError('אין חיבור'); } finally { clearTimeout(timer); }
-      // an HTML page means the deployment is misconfigured (access not "anyone") or the old script is still at this URL
-      try { j = await res.json(); } catch (e) { throw new NetError('השרת החזיר דף במקום נתונים. לבדוק את הפריסה של Apps Script'); }
+      try { j = await res.json(); } catch (e) { throw new NetError('השרת לא זמין כרגע'); }
     }
-    if (!j.ok) throw new Error(j.error || 'שגיאה');
+    // retry: Google was busy or unreachable, so the report stays in the queue instead of being dropped
+    if (!j.ok) throw new (j.retry ? NetError : Error)(j.error || 'שגיאה');
     return j;
   }
 
