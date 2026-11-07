@@ -1,5 +1,5 @@
 /**
- * מעקב חממות וניל: השרת (Cloudflare Worker). מחליף את apps-script/Code.gs עם אותן פעולות ואותו מבנה גיליון.
+ * מעקב חממות וניל: השרת (Cloudflare Worker). קורא וכותב בקובץ Google Sheets של המשק, בלשוניות הקיימות בלבד.
  * האתר שולח POST עם JSON: { action, code, ...payload } ומקבל { ok, role, data } או { ok:false, error }.
  * השרת פונה לגוגל בשם חשבון החווה (חיבור חד-פעמי ב-/connect), כך שהתמונות נשמרות בתיקייה של הבעלים ב-Drive.
  *
@@ -42,7 +42,8 @@ const SETTING = {
   lastBackup: 'גיבוי אחרון',
   keepDays: 'ימים לשמירת גיבויים',
 };
-const MANAGER_ONLY = ['dashboard', 'resolveIssue', 'report', 'photoSet', 'photo', 'taskAdd', 'backup'];
+// photo is checked inside: the worker may add photos to his own greenhouse visit, the manager to any row
+const MANAGER_ONLY = ['dashboard', 'resolveIssue', 'report', 'photoSet', 'taskAdd', 'backup'];
 // Columns that hold a date or time, with the format the sheet shows them in. In the code they are milliseconds.
 const DATE_COLS = {
   'תאריך': 'dd/mm/yyyy', 'כניסה': 'hh:mm', 'יציאה': 'hh:mm', 'עודכן': 'dd/mm/yyyy hh:mm',
@@ -76,7 +77,7 @@ async function api(request, env) {
     if (MANAGER_ONLY.includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
     const fn = Object.hasOwn(ACTIONS, String(req.action)) ? ACTIONS[req.action] : null; // never inherited keys like "constructor"
     if (!fn) return { ok: false, error: 'פעולה לא מוכרת: ' + req.action };
-    return { ok: true, role, data: await fn(await load(env), req) };
+    return { ok: true, role, data: await fn(await load(env), req, role) };
   } catch (err) {
     // retry: the phone keeps the report in its queue and sends it again later, instead of dropping it
     if (err && err.google) console.error(err.google);
@@ -516,12 +517,18 @@ const ACTIONS = {
     return { id: req.id };
   },
 
-  /** One photo per request (up to 20 per set; the site sends them one after another), its link added to the row's תמונה cell. */
-  photo: async (db, req) => {
+  /**
+   * One photo per request (the site sends them one after another), its link added to the row's תמונה cell:
+   * a photo taken during a greenhouse visit lands in that visit's row, next to its time.
+   */
+  photo: async (db, req, role) => {
     const t = db.t.log;
     const set = findBy(t, 'מזהה', req.id);
     if (!set) throw new Error('לא נמצאה רשומה (' + req.id + ')');
-    const at = typeof plain(set)['תאריך'] === 'number' ? plain(set)['תאריך'] : Date.now();
+    const visit = !isSpecial(set);
+    if (role !== 'manager' && !visit) throw new Error('נדרש קוד מנהל');
+    const p = plain(set);
+    const at = visit && typeof p['כניסה'] === 'number' ? p['כניסה'] : typeof p['תאריך'] === 'number' ? p['תאריך'] : Date.now();
     // file name in Drive: greenhouse, upload date and time, number in the set
     const name = (set['חממה'] || 'תמונה') + ' ' + fmtLocal(at, true).replace(':', '-') + ' (' + ((Number(req.idx) || 0) + 1) + ')';
     const url = await savePhoto(db, req.photo, name);
