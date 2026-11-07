@@ -35,7 +35,7 @@ const formulas = {}, formats = {};
 const files = [{ id: 'B-OLD', name: 'גיבוי חממות וניל 2026-09-01 02:00', parents: ['BACKUPS-folder-1234'], createdTime: '2026-09-01T00:00:00Z' },
   { id: 'MINE', name: 'מסמך של הבעלים', parents: ['BACKUPS-folder-1234'], createdTime: '2020-01-01T00:00:00Z' }];
 const perms = [], created = [], patches = [];
-let tokenCalls = 0;
+let tokenCalls = 0, version = 1;
 
 const titleOf = (range) => { const m = /^'((?:[^']|'')+)'/.exec(range); return m[1].replace(/''/g, "'"); };
 const trim = (rows) => {
@@ -85,9 +85,11 @@ globalThis.fetch = async (input, opt = {}) => {
       let last = rows.length; while (last > 0 && !(rows[last - 1] || []).some((c) => c !== '' && c != null)) last--;
       const row = JSON.parse(body).values[0];
       rows[last] = row;
+      version++;
       return ok({ updates: { updatedRange: "'" + t + "'!A" + (last + 1) + ':Q' + (last + 1) } });
     }
     if (path.endsWith(':batchUpdate')) {
+      version++;
       for (const r of JSON.parse(body).requests) {
         const x = r.updateCells || r.repeatCell;
         if (!x) continue;
@@ -129,6 +131,7 @@ globalThis.fetch = async (input, opt = {}) => {
       const f = files.find((x) => x.id === id); if (f) Object.assign(f, JSON.parse(body));
       return ok({});
     }
+    if (method === 'GET' && /version/.test(url.searchParams.get('fields') || '')) return ok({ version: String(version) });
     if (method === 'GET') return ok({ parents: [path.includes('REPORT') ? 'root' : 'FARM-FOLDER'] });
   }
   throw new Error('unexpected request ' + method + ' ' + url);
@@ -167,7 +170,7 @@ res = await get('/oauth?state=' + new URL(res.headers.get('Location')).searchPar
 assert.strictEqual(res.status, 200);
 assert.match(await res.text(), /מחובר/);
 assert.strictEqual(kv.get('refresh_token'), 'R-cortado.snir@gmail.com');
-assert.strictEqual((await (await get('/')).json()).connected, true);
+assert.deepStrictEqual(await (await get('/')).json(), { ok: true, app: 'vanilla-greenhouses', connected: true, sheet: true }, 'health check: yes or no only');
 assert.match(await (await get('/privacy')).text(), /פרטית/);
 
 // ---- codes ----
@@ -187,6 +190,10 @@ assert.strictEqual((await call({ action: 'bootstrap', code: W })).role, 'worker'
 const shortEnv = { ...env, WORKER_CODE: '1234' };
 assert.strictEqual(await (await worker.fetch(new Request('https://vg.workers.dev/', { method: 'POST', body: JSON.stringify({ action: 'bootstrap', code: '1234' }) }), shortEnv)).json().then((x) => x.error), 'קוד שגוי', 'a short code is never accepted');
 
+// ---- the phones re-read only when the file changed ----
+const st1 = (await call({ action: 'stamp', code: W })).data.v;
+assert.strictEqual((await call({ action: 'stamp', code: W })).data.v, st1, 'same stamp while nothing changes');
+
 // ---- bootstrap reads the farm's tabs ----
 const boot = (await call({ action: 'bootstrap', code: W })).data;
 assert.deepStrictEqual(boot.greenhouses.map((x) => x.id + ':' + x.name), ['GH1:חממה 1', 'GH2:חממה 2', 'GH3:חממה 3']);
@@ -197,11 +204,16 @@ assert.deepStrictEqual(boot.workers, ['מגדל'], 'until the workers row is fil
 tabs['Code'][7][1] = 'גרשון';
 assert.deepStrictEqual((await call({ action: 'bootstrap', code: W })).data.workers, ['גרשון']);
 assert.strictEqual(tokenCalls, 1, 'the access token is reused');
+tabs['Code'][7][1] = '';
+assert.deepStrictEqual((await call({ action: 'bootstrap', code: W })).data.workers, ['מגדל'], 'with no names in Code, the names in Log data');
+tabs['Code'][7][1] = 'גרשון';
 
 // ---- work in a greenhouse ----
 const t0 = Date.now() - 10 * 3600000;
+const st2 = (await call({ action: 'stamp', code: W })).data.v;
 assert.ok((await call({ action: 'checkIn', code: W, id: 'L-1', worker: 'גרשון', gh: 'GH1', work: 'W01', ts: t0 })).ok);
 assert.strictEqual((await call({ action: 'checkIn', code: W, id: 'L-1', worker: 'גרשון', gh: 'GH1', work: 'W01', ts: t0 })).data.duplicate, true, 'idempotent');
+assert.notStrictEqual((await call({ action: 'stamp', code: W })).data.v, st2, 'a write changes the stamp');
 let row = lastLog();
 const n = log.length - 1;
 assert.strictEqual(row[logCol('עובד / מדווח')], 'גרשון');
@@ -357,6 +369,22 @@ globalThis.fetch = async (u, o) => (String(u).includes('sheets.googleapis.com') 
 const busy = await call({ action: 'checkIn', code: W, id: 'L-9', worker: 'גרשון', gh: 'GH1', work: 'W01', ts: t0 });
 assert.deepStrictEqual([busy.ok, busy.retry], [false, true]);
 globalThis.fetch = realFetch;
+
+// ---- years of data: every day comes back as the same Israel date, across years and DST changes ----
+const wallSerial = (y, m, d, h) => Date.UTC(y, m - 1, d, h) / DAY + 25569;
+const startCount = log.length;
+for (let i = 0; i < 3 * 365; i++) {
+  const d = new Date(Date.UTC(2023, 10, 1) + i * DAY);
+  const s = wallSerial(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), 7);
+  log.push([Math.floor(s), 'גרשון', 'חממה ' + (1 + (i % 3)), s, s + 1 / 24, 1, 'האבקה ידנית של פרחים', '', 10, '', '', 'סגור', 'L-y' + i, 'W01']);
+}
+const years = (await call({ action: 'dashboard', code: M })).data.log.filter((r) => /^L-y/.test(r['מזהה']));
+assert.strictEqual(years.length, 3 * 365, 'every row of three years comes back');
+const bad = years.filter((r, i) => { const d = new Date(Date.UTC(2023, 10, 1) + i * DAY); return israel(r['כניסה']) !== new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', dateStyle: 'short' }).format(d) + ', 07:00'; });
+assert.strictEqual(bad.length, 0, 'entry stays 07:00 Israel time on every day, summer and winter: ' + bad.slice(0, 2).map((r) => israel(r['כניסה'])));
+const rep3 = await call({ action: 'report', code: M, from: Date.UTC(2023, 10, 1), to: Date.now() });
+assert.ok(rep3.ok, rep3.error);
+log.splice(startCount);
 
 // ---- nothing that was there before is changed or removed ----
 const was = JSON.parse(before);

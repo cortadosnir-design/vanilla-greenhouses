@@ -217,6 +217,16 @@ async function skipIntro(p) {
   await page.waitForTimeout(700);
   await page.screenshot({ path: path.join(SHOTS, '07-dash-phone.png'), fullPage: true });
 
+  // a change made elsewhere (in the sheet) shows up without reloading
+  const before = Number(await page.textContent('#tasksCount'));
+  await page.request.post(BASE + 'api', { data: JSON.stringify({ action: 'taskAdd', code: '9876', id: 'T-sync1', gh: 'GH1', text: 'נוסף בגיליון', due: Date.now() + 86400000 }) });
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForFunction((n) => Number(document.querySelector('#tasksCount').textContent) === n + 1, before, { timeout: 10000 });
+  assert.match(await page.textContent('#syncState'), /מסונכרן/);
+  await page.request.post(BASE + 'api', { data: JSON.stringify({ action: 'taskDone', code: '9876', id: 'T-sync1' }) });
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForFunction((n) => Number(document.querySelector('#tasksCount').textContent) === n, before, { timeout: 10000 });
+
   // comparison has a date column before hours
   assert.strictEqual(await page.textContent('table.compare thead th:nth-child(2)'), 'תאריך אחרון');
 
