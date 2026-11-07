@@ -77,7 +77,7 @@ function handle(req) {
     case 'checkOut': {
       const r = state.log.find((x) => x['מזהה'] === req.id);
       if (!r) return { ok: false, error: 'לא נמצאה כניסה פתוחה' };
-      Object.assign(r, { 'יציאה': req.ts, 'שעות': (req.ts - r['כניסה']) / 3600000, 'כמות': req.qty, 'הערות': req.notes, 'סטטוס': 'סגור', 'תמונה': req.photo ? 'https://drive.google.com/file/d/1newPHOTO/view' : '' });
+      Object.assign(r, { 'יציאה': req.ts, 'שעות': (req.ts - r['כניסה']) / 3600000, 'כמות': req.qty, 'הערות': req.notes, 'סטטוס': 'סגור' });
       return { ok: true, role, data: { id: req.id, photoBytes: (req.photo || '').length } };
     }
     case 'photoSet':
@@ -100,7 +100,28 @@ function handle(req) {
       state.issues.push({ 'מזהה': req.id, 'תאריך': req.ts, 'חממה': (greenhouses.find((g) => g.id === req.gh) || { name: req.gh }).name, 'מדווח': req.worker, 'קטגוריה': req.category, 'חומרה': req.severity, 'תיאור': req.desc, 'תמונה': '', 'סטטוס': 'פתוח' });
       return { ok: true, role, data: { id: req.id } };
     case 'stamp': return { ok: true, role, data: { v: String(Date.now()) } };
-    case 'dashboard': return { ok: true, role, data: Object.assign({ log: state.log, issues: state.issues, attendance: state.attendance, photos: state.photos, tasks: state.tasks, system: { lastBackup: null, driveUsed: 3.2e9, driveLimit: 16106127360, secondOwner: false } }, base) };
+    case 'rowGet': case 'rowEdit': case 'rowDelete': case 'photoDelete': {
+      const r = state.log.concat(state.issues).find((x) => x['מזהה'] === req.id && x['סטטוס'] !== 'נמחק');
+      if (!r) return { ok: false, error: 'הרשומה לא נמצאה' };
+      if (role !== 'manager' && r['עובד'] !== req.worker && r['מדווח'] !== req.worker) return { ok: false, error: 'אפשר לשנות רק רשומות שלך מהשבוע האחרון' };
+      if (req.action === 'rowEdit') {
+        if (req.notes != null) r['הערות'] = req.notes;
+        if (req.qty != null) r['כמות'] = req.qty === '' ? '' : Number(req.qty);
+        if (req.start) r['כניסה'] = req.start;
+        if (req.end) r['יציאה'] = req.end;
+        if (typeof r['כניסה'] === 'number' && typeof r['יציאה'] === 'number') r['שעות'] = (r['יציאה'] - r['כניסה']) / 3600000;
+      }
+      if (req.action === 'rowDelete') r['סטטוס'] = 'נמחק';
+      if (req.action === 'photoDelete') {
+        const keep = String(r['תמונה'] || '').split(/\s+/).filter((u) => u && u !== req.url);
+        r['תמונה'] = keep.join('\n');
+        calls.push('photoDelete');
+        return { ok: true, role, data: { id: req.id, photos: keep } };
+      }
+      calls.push(req.action);
+      return { ok: true, role, data: req.action === 'rowDelete' ? { id: req.id } : r };
+    }
+    case 'dashboard': return { ok: true, role, data: Object.assign({ log: state.log.filter((r) => r['סטטוס'] !== 'נמחק'), issues: state.issues, attendance: state.attendance, photos: state.photos, tasks: state.tasks, system: { lastBackup: null, driveUsed: 3.2e9, driveLimit: 16106127360, secondOwner: false } }, base) };
     case 'resolveIssue': {
       const r = state.issues.find((x) => x['מזהה'] === req.id);
       Object.assign(r, { 'סטטוס': req.status, 'פתרון': req.solution });

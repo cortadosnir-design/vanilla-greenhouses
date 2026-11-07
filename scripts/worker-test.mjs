@@ -424,7 +424,29 @@ await call({ action: 'userDel', session: S, email: 'gershon566@gmail.com' });
 assert.strictEqual((await call({ action: 'stamp', session: gs })).signin, true, 'a removed user is out at once');
 assert.ok((await call({ action: 'logout', session: S })).ok);
 assert.strictEqual((await call({ action: 'stamp', session: S })).signin, true, 'signed out');
-log.splice(log.findIndex((r) => r[logCol('מזהה')] === 'S-g1'), 1);
+
+// ---- change or delete what was reported ----
+const lastBy = (id) => log.find((r) => r[logCol('מזהה')] === id);
+const L1r = await call({ action: 'rowGet', code: W, worker: 'גרשון', id: 'L-1' }); assert.ok(L1r.ok, L1r.error); const L1 = L1r.data;
+assert.strictEqual(L1['מזהה'], 'L-1');
+assert.match((await call({ action: 'rowEdit', code: W, worker: 'מישהו', id: 'L-1', notes: 'x' })).error, /רק רשומות שלך/, 'not someone else\'s row');
+const ed = await call({ action: 'rowEdit', code: W, worker: 'גרשון', id: 'L-1', notes: 'תוקן', qty: '150', start: L1['כניסה'] - 600000 });
+assert.ok(ed.ok, ed.error);
+assert.deepStrictEqual([ed.data['הערות'], ed.data['כמות'], ed.data['כניסה']], ['תוקן', 150, L1['כניסה'] - 600000]);
+assert.strictEqual((await call({ action: 'rowGet', code: M, id: 'L-1' })).data['כניסה'], L1['כניסה'] - 600000, 'the new entry time is in the sheet');
+assert.match((await call({ action: 'rowEdit', code: M, id: 'L-1', end: L1['כניסה'] - 7200000 })).error, /לפני שעת כניסה/);
+assert.match((await call({ action: 'rowEdit', code: M, id: 'L-1', start: Date.now() + DAY })).error, /זמן לא תקין/);
+const pics = String(L1['תמונה']).split(/\s+/).filter(Boolean);
+assert.ok(pics.length >= 1, 'the visit has a photo to remove');
+const pd = await call({ action: 'photoDelete', code: W, worker: 'גרשון', id: 'L-1', url: pics[0] });
+assert.ok(pd.ok, pd.error);
+assert.strictEqual(pd.data.photos.length, pics.length - 1);
+assert.ok(!String(lastBy('L-1')[logCol('חומרים / תמונות')]).includes(pics[0]), 'the link is gone from the row');
+assert.match((await call({ action: 'photoDelete', code: M, id: 'L-1', url: pics[0] })).error, /לא נמצאה/);
+assert.ok((await call({ action: 'rowDelete', code: M, id: 'L-1' })).ok);
+assert.strictEqual(lastBy('L-1')[logCol('סטטוס')], 'נמחק', 'a deleted row stays in the sheet, marked');
+assert.ok(!(await call({ action: 'dashboard', code: M })).data.log.some((r) => r['מזהה'] === 'L-1'), 'and is gone from the dashboard');
+assert.match((await call({ action: 'rowEdit', code: M, id: 'L-1', notes: 'x' })).error, /לא נמצאה/);
 
 // ---- nothing that was there before is changed or removed ----
 const was = JSON.parse(before);
