@@ -1,240 +1,182 @@
-// Runs apps-script/Code.gs against in-memory stubs of the Apps Script services, with the real sheet headers
-// from vanilla-greenhouses.xlsx, so header/column mismatches and reference errors surface before deploying.
+// Runs apps-script/Code.gs against an in-memory copy of the farm's real file ("Vanilla grow assitant":
+// Code, Master Data, Work, Calendar, Barcode, Log data) so tab, column and behaviour mistakes surface before deploying.
 // node scripts/gas-harness.js
-const fs = require('fs');
-const path = require('path');
-const vm = require('vm');
 const assert = require('assert');
-const { execFileSync } = require('child_process');
+const { Sheet, Spreadsheet, load } = require('./gas-stubs');
 
-const root = path.join(__dirname, '..');
-const headers = JSON.parse(execFileSync('python3', ['-I', '-c', `
-import json, openpyxl
-wb = openpyxl.load_workbook(${JSON.stringify(path.join(root, 'vanilla-greenhouses.xlsx'))})
-print(json.dumps({ws.title: [c.value for c in ws[1]] for ws in wb}, ensure_ascii=False))`]).toString());
+const tab = (name, rows) => { const s = new Sheet(name, rows[0]); rows.slice(1).forEach((r) => s.appendRow(r)); return s; };
+const time = (h, m) => new Date(1899, 11, 30, h, m);
+const isDate = (v) => Object.prototype.toString.call(v) === '[object Date]';
 
-// ---- minimal Sheets model ----
-class Range {
-  constructor(sh, r, c, nr = 1, nc = 1) { Object.assign(this, { sh, r, c, nr, nc }); }
-  setValue(v) { this.sh.cell(this.r, this.c, v); return this; }
-  setValues(vals) { vals.forEach((row, i) => row.forEach((v, j) => this.sh.cell(this.r + i, this.c + j, v))); return this; }
-  getValue() { return this.sh.rows[this.r - 1]?.[this.c - 1] ?? ''; }
-  getDisplayValue() { const v = this.getValue(); return Object.prototype.toString.call(v) === '[object Date]' ? v.toLocaleDateString('en-GB') : String(v); }
-  getValues() { return Array.from({ length: this.nr }, (_, i) => Array.from({ length: this.nc }, (_, j) => this.sh.rows[this.r - 1 + i]?.[this.c - 1 + j] ?? '')); }
-  getA1Notation() { return String.fromCharCode(64 + this.c) + this.r; }
-  setFormula(f) { this.sh.formulas[this.getA1Notation()] = f; this.sh.cell(this.r, this.c, 0.5); return this; }
-  setNumberFormat() { return this; } setFontWeight() { return this; } setFontColor() { return this; } setBackground() { return this; }
-  setHorizontalAlignment() { return this; } setFontFamily() { return this; } applyRowBanding() { return this; }
-}
-class Sheet {
-  constructor(name, head) { this.name = name; this.rows = [head.map((h) => h ?? '')]; this.formulas = {}; }
-  getName() { return this.name; }
-  cell(r, c, v) { while (this.rows.length < r) this.rows.push([]); const row = this.rows[r - 1]; while (row.length < c) row.push(''); row[c - 1] = v; }
-  getDataRange() { return new Range(this, 1, 1, this.rows.length, Math.max(...this.rows.map((r) => r.length))); }
-  getRange(r, c, nr = 1, nc = 1) { return new Range(this, r, c, nr, nc); }
-  appendRow(vals) { this.rows.push(vals.slice()); return this; }
-  getLastRow() { return this.rows.length; }
-  setName(n) { this.name = n; return this; } setRightToLeft() { return this; } setFrozenRows() { return this; } autoResizeColumns() { return this; }
-}
-class Spreadsheet {
-  constructor(name, sheets) { this.name = name; this.sheets = sheets; this.id = 'ss-' + name; }
-  getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
-  getSheets() { return this.sheets; }
-  insertSheet(n) { const s = new Sheet(n, []); s.rows = []; this.sheets.push(s); return s; }
-  getId() { return this.id; } getUrl() { return 'https://sheets/' + this.id; } getName() { return this.name; }
-}
-const main = new Spreadsheet('main', Object.entries(headers).map(([n, h]) => new Sheet(n, h)));
-// seed data as the owner would fill it
-const put = (sheetName, row) => main.getSheetByName(sheetName).appendRow(row);
-const H = (n) => headers[n];
-const obj = (n, o) => H(n).map((h) => (h in o ? o[h] : ''));
-put('חממות', obj('חממות', { 'מזהה': 'GH1', 'שם': 'חממה 1', 'פעילה': 'כן' }));
-put('חממות', obj('חממות', { 'מזהה': 'GH2', 'שם': 'חממה 2', 'פעילה': 'כן' }));
-put('חממות', obj('חממות', { 'מזהה': 'GH3', 'שם': 'חממה 3', 'פעילה': 'לא' }));
-put('עבודות', obj('עבודות', { 'קוד': 'W01', 'קטגוריה': 'האבקה', 'שם העבודה': 'האבקה ידנית', 'יחידת כמות': 'פרחים', 'מיקום': 'חממה', 'כל כמה ימים': 1, 'מעקב תדירות': 'לא' }));
-put('עבודות', obj('עבודות', { 'קוד': 'W12', 'קטגוריה': 'קטיף', 'שם העבודה': 'מיון', 'יחידת כמות': 'ק"ג', 'מיקום': 'מחסן', 'כל כמה ימים': '', 'מעקב תדירות': 'לא' }));
-put('עובדים', obj('עובדים', { 'שם': 'דנה', 'פעיל': 'כן' }));
-put('עובדים', obj('עובדים', { 'שם': 'ישן', 'פעיל': 'לא' }));
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'קוד עובדים', 'ערך': 'abc123' }));
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'קוד מנהל', 'ערך': 'mgr987' }));
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'מזהה תיקיית תמונות ב-Drive', 'ערך': '' }));
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'אימייל לעדכון יומי', 'ערך': 'owner@example.com' }));
+const code = tab('Code', [[''], ['Deployment ID', 'AKfy-old'], ['URL', 'https://script.google.com/macros/s/old/exec']]);
+const master = tab('Master Data', [['סעיף / מאפיין', 'חממה 1', 'חממה 2', 'חממה 3'], ['שטח החממה (מ"ר)', 50, 50, 50], ['סה"כ צמחים בחממה', 90, 90, 90]]);
+const work = tab('Work', [
+  ['קוד עבודה', 'קטגוריית עבודה', 'שם העבודה / טיפול אגרוטכני', 'תיאור מפורט והנחיות ביצוע', 'עונה / שלב פנולוגי מומלץ', 'תדירות / מחזוריות'],
+  ['W01', 'האבקה ופריחה', 'האבקה ידנית של פרחים', 'תיאור', 'אביב', 'יומי'],
+  ['W09', 'הגנת הצומח', 'ניטור מזיקים ומחלות', 'תיאור', 'כל השנה', 'שבועי'],
+  ['W12', 'קטיף והאסיף', 'מיון, שקילה ושטיפת תרמילים', 'תיאור', 'קטיף', 'יומי'],
+]);
+const calendar = new Sheet('Calendar', []); calendar.rows = [[]];
+const barcode = new Sheet('Barcode', []); barcode.rows = [[]];
+const LOG_HEAD = ['תאריך', 'עובד / מדווח', 'מספר חממה', 'זמן הגעה (כניסה)', 'זמן יציאה', 'סה"כ שעות עבודה', 'קטגוריית טיפול', 'פירוט עבודה ומיקום', 'כמות / תפוקה', 'חומרים / תמונות', 'הערות / בעיות שנצפו'];
+const old = [new Date(2026, 10, 7), 'מגדל', 'חממה 2', time(15, 30), time(16, 45), time(1, 15), 'דילול וספירת פרחים/אשכולות', '', '', 'https://drive.google.com/file/d/1lngmWYujOqXTPMvCekcK81G7BoUBUhM8/view?usp=drivesdk', '', 'Pending'];
+const log = tab('Log data', [LOG_HEAD, old]);
+const main = new Spreadsheet('Vanilla grow assitant', [code, master, work, calendar, barcode, log]);
+const tabsBefore = main.getSheets().map((s) => s.getName());
+const snapshot = () => JSON.stringify({ code: code.rows.slice(0, 3), master: master.rows, work: work.rows.map((r) => r.slice(0, 6)), log: log.rows[1].slice(0, 12) });
+const before = snapshot();
 
-const drive = { files: [], folders: [], editors: [] };
-const sandbox = {
-  SpreadsheetApp: { getActive: () => main, create: (name) => new Spreadsheet(name, [new Sheet('Sheet1', [])]), BandingTheme: { GREEN: 1 } },
-  DriveApp: {
-    Access: { ANYONE_WITH_LINK: 'link' }, Permission: { VIEW: 'view' },
-    getRootFolder: () => ({ getName: () => 'root' }),
-    createFolder: (n) => { const f = { id: 'folder-' + drive.folders.length, name: n, files: [], getId() { return this.id; }, addEditor(e) { drive.editors.push([this.name, e]); },
-      getFiles() { let i = 0; const list = this.files; return { hasNext: () => i < list.length, next: () => list[i++] }; }, createFile(b) { const file = { id: 'file-' + drive.files.length, blob: b, shared: null, setSharing(a, p) { this.shared = [a, p]; }, getUrl() { return 'https://drive.google.com/file/d/' + this.id + '/view'; } }; drive.files.push(file); return file; } }; drive.folders.push(f); return f; },
-    getFolderById: (id) => drive.folders.find((f) => f.id === id) || (() => { throw new Error('no folder ' + id); })(),
-    getFileById: (id) => ({ getParents: () => ({ hasNext: () => false }), setSharing() {}, moveTo() {}, addEditor(e) { drive.editors.push(['file:' + id, e]); },
-      makeCopy(name, folder) { const f = { name, created: new Date(), trashed: false, getName() { return this.name; }, getDateCreated() { return this.created; }, setTrashed(v) { this.trashed = v; }, getUrl() { return 'https://sheets/copy-' + name; } }; folder.files.push(f); return f; } }),
-    getStorageUsed: () => 3e9, getStorageLimit: () => 15e9,
-  },
-  LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
-  CacheService: (() => { const store = {}; const c = { get: (k) => store[k] ?? null, put: (k, v) => { store[k] = v; } }; return { getScriptCache: () => c }; })(),
-  ContentService: { createTextOutput: (t) => ({ text: t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
-  Utilities: { newBlob: (bytes, type, name) => ({ bytes, type, name }), base64Decode: (s) => Buffer.from(s, 'base64'), formatDate: (d, tz, f) => d.toLocaleDateString('en-GB') },
-  Session: { getScriptTimeZone: () => 'Asia/Jerusalem' },
-  UrlFetchApp: { fetch: () => ({ getContentText: () => JSON.stringify({ daily: { weather_code: [3, 3, 3], temperature_2m_max: [36, 20, 20], temperature_2m_min: [12, 8, 12], precipitation_sum: [0, 5, 0], precipitation_probability_max: [0, 60, 0], wind_speed_10m_max: [10, 50, 10], relative_humidity_2m_max: [90, 90, 90], relative_humidity_2m_min: [40, 60, 60] } }) }) },
-  MailApp: { sent: [], sendEmail(m) { this.sent.push(m); } },
-  ScriptApp: { getProjectTriggers: () => [], newTrigger: () => ({ timeBased() { return this; }, everyDays() { return this; }, atHour() { return this; }, create() {} }) },
-  console,
-};
-vm.createContext(sandbox);
-vm.runInContext(fs.readFileSync(path.join(root, 'apps-script', 'Code.gs'), 'utf8'), sandbox);
+const { sandbox, drive, call } = load(main);
+const W = '1234', M = '9876';
+const logCol = (name) => log.rows[0].indexOf(name);
+const lastLog = () => log.rows[log.rows.length - 1];
+const codeRow = (k) => code.rows.find((r) => r[0] === k);
 
-const call = (req) => JSON.parse(sandbox.doPost({ postData: { contents: JSON.stringify(req) } }).text);
-const W = 'abc123', M = 'mgr987';
+// ---- first request runs setup: only existing tabs, nothing deleted or overwritten ----
+let boot = call({ action: 'bootstrap', code: W });
+assert.ok(boot.ok, boot.error);
+assert.deepStrictEqual(main.getSheets().map((s) => s.getName()), tabsBefore, 'no tab created or removed');
+assert.strictEqual(snapshot(), before, 'existing data untouched');
+assert.deepStrictEqual(work.rows[0].slice(6), ['כל כמה ימים', 'יחידת כמות', 'מיקום', 'מעקב תדירות']);
+assert.deepStrictEqual(log.rows[0].slice(11), ['סטטוס', 'מזהה', 'קוד עבודה', 'יחידה', 'חומרה', 'פתרון'], 'blank status column named, the rest after it');
+assert.strictEqual(log.rows[1][11], 'Pending', 'old status value kept');
+assert.strictEqual(calendar.rows[0][1], 'תאריך ביצוע', 'Calendar titles written into the empty tab');
+assert.ok(codeRow('קוד עובדים') && codeRow('עובדים'), 'settings rows added to Code');
+assert.deepStrictEqual(barcode.rows.slice(1).map((r) => r[0]), ['חממה 1', 'חממה 2', 'חממה 3']);
+assert.match(barcode.rows[1][1], /\?gh=GH1$/);
 
-// auth
+assert.deepStrictEqual(boot.data.greenhouses.map((g) => g.id + ':' + g.name), ['GH1:חממה 1', 'GH2:חממה 2', 'GH3:חממה 3'], 'greenhouses from Master Data columns');
+const w09 = boot.data.works.find((w) => w.code === 'W09');
+assert.deepStrictEqual([w09.name, w09.category, w09.interval, w09.track], ['ניטור מזיקים ומחלות', 'הגנת הצומח', 7, true]);
+assert.strictEqual(boot.data.works.find((w) => w.code === 'W12').location, 'מחסן');
+assert.deepStrictEqual(boot.data.workers, ['מגדל'], 'until the workers row is filled, names already in Log data');
+
+// fill the workers row the way the owner would; setup runs again without duplicating anything
+codeRow('עובדים')[1] = 'דנה, יוסי';
+const cols = log.rows[0].length, codeRows = code.rows.length;
+sandbox.setup();
+assert.strictEqual(log.rows[0].length, cols);
+assert.strictEqual(code.rows.length, codeRows);
+assert.deepStrictEqual(call({ action: 'bootstrap', code: W }).data.workers, ['דנה', 'יוסי']);
+
+// ---- auth ----
 assert.strictEqual(call({ action: 'bootstrap', code: 'nope' }).error, 'קוד שגוי');
 assert.strictEqual(call({ action: 'dashboard', code: W }).error, 'נדרש קוד מנהל');
-const boot = call({ action: 'bootstrap', code: W });
-assert.strictEqual(boot.role, 'worker');
-assert.deepStrictEqual(boot.data.greenhouses.map((g) => g.id), ['GH1', 'GH2'], 'inactive greenhouse hidden');
-assert.deepStrictEqual(boot.data.workers, ['דנה']);
-assert.strictEqual(boot.data.works[1].location, 'מחסן');
 
-// check in / out with a photo; unit comes from the work
-const t0 = new Date(2026, 10, 7, 22, 30).getTime();
-let r = call({ action: 'checkIn', code: W, id: 'L-1', worker: 'דנה', gh: 'GH1', work: 'W01', ts: t0 });
-assert.ok(r.ok, r.error);
-const log = main.getSheetByName('יומן עבודה');
-const col = (n) => headers['יומן עבודה'].indexOf(n);
-let row = log.rows[log.rows.length - 1];
-assert.strictEqual(row[col('חממה')], 'חממה 1');
-assert.strictEqual(row[col('עבודה')], 'האבקה ידנית');
-assert.strictEqual(row[col('יחידה')], 'פרחים');
-assert.strictEqual(row[col('סטטוס')], 'פתוח');
-assert.ok(row[col('כניסה')]  && Object.prototype.toString.call(row[col('כניסה')]) === '[object Date]');
-assert.match(log.formulas['J' + log.rows.length], /ROUND\(\(I\d+-H\d+\)\*24,2\)/, 'hours formula without MOD');
+// ---- work in a greenhouse lands in Log data under the farm's own titles ----
+const t0 = new Date(2026, 10, 8, 22, 30).getTime();
+assert.ok(call({ action: 'checkIn', code: W, id: 'L-1', worker: 'דנה', gh: 'GH1', work: 'W01', ts: t0 }).ok);
 assert.strictEqual(call({ action: 'checkIn', code: W, id: 'L-1', worker: 'דנה', gh: 'GH1', work: 'W01', ts: t0 }).data.duplicate, true, 'idempotent');
-
-const png = 'data:image/jpeg;base64,' + Buffer.from('fakejpeg').toString('base64');
-r = call({ action: 'checkOut', code: W, id: 'L-1', ts: t0 + 2 * 3600000, qty: '42', notes: '=HYPERLINK("x")', photo: png });
-assert.ok(r.ok, r.error);
-row = log.rows[log.rows.length - 1];
-assert.strictEqual(row[col('כמות')], 42);
-assert.strictEqual(row[col('הערות')], "'=HYPERLINK(\"x\")", 'formula injection neutralised');
-assert.match(row[col('תמונה')], /drive\.google\.com\/file\/d\/file-0/);
-assert.strictEqual(row[col('סטטוס')], 'סגור');
-assert.strictEqual(drive.folders.length, 1, 'photo folder created once');
-assert.strictEqual(main.getSheetByName('הגדרות').rows[3][1], 'folder-0', 'folder id written back to settings');
-assert.strictEqual(call({ action: 'checkOut', code: W, id: 'L-1', ts: t0 }).data.duplicate, true);
+assert.ok(call({ action: 'checkOut', code: W, id: 'L-1', ts: t0 + 2.5 * 3600000, qty: '120', notes: '=HYPERLINK("x")' }).ok);
+let row = lastLog();
+const at = (h) => row[LOG_HEAD.indexOf(h)];
+assert.strictEqual(at('עובד / מדווח'), 'דנה');
+assert.strictEqual(at('מספר חממה'), 'חממה 1');
+assert.strictEqual(at('קטגוריית טיפול'), 'האבקה ידנית של פרחים');
+assert.strictEqual(at('כמות / תפוקה'), 120);
+assert.strictEqual(at('הערות / בעיות שנצפו'), "'=HYPERLINK(\"x\")", 'formula injection neutralised');
+assert.ok(isDate(at('זמן הגעה (כניסה)')));
+assert.strictEqual(row[logCol('סטטוס')], 'סגור');
+assert.strictEqual(row[logCol('קוד עבודה')], 'W01');
+assert.strictEqual(row[logCol('יחידה')], 'פרחים');
+assert.match(log.formulas['F' + log.rows.length], /ROUND\(\(E\d+-D\d+\)\*24,2\)/, 'hours across midnight without MOD');
 assert.match(call({ action: 'checkOut', code: W, id: 'L-9', ts: t0 }).error, /לא נמצאה/);
+assert.ok(call({ action: 'checkIn', code: W, id: 'L-2', worker: 'דנה', gh: 'מחסן', work: 'W12', ts: t0 }).ok);
+assert.strictEqual(lastLog()[LOG_HEAD.indexOf('מספר חממה')], 'מחסן');
 
-// photos are manager-only: a set per greenhouse and date, one photo per request
-assert.strictEqual(call({ action: 'photoSet', code: W, id: 'P-1', gh: 'GH1', date: t0 }).error, 'נדרש קוד מנהל');
-assert.strictEqual(call({ action: 'photo', code: W, id: 'P-1', idx: 0, photo: png }).error, 'נדרש קוד מנהל');
-r = call({ action: 'photoSet', code: M, id: 'P-1', gh: 'GH1', date: t0, note: 'פריחה', by: 'מנהל' });
-assert.ok(r.ok, r.error);
+// ---- work day (attendance) is a Log data row ----
+assert.ok(call({ action: 'shiftIn', code: W, id: 'S-1', worker: 'דנה', ts: t0 - 3600000 }).ok);
+row = lastLog();
+assert.strictEqual(row[logCol('קוד עבודה')], 'SHIFT');
+assert.strictEqual(row[LOG_HEAD.indexOf('קטגוריית טיפול')], 'יום עבודה');
+assert.ok(call({ action: 'shiftOut', code: W, id: 'S-1', ts: t0 + 8 * 3600000 }).ok);
+assert.strictEqual(lastLog()[logCol('סטטוס')], 'סגור');
+assert.match(call({ action: 'shiftOut', code: W, id: 'S-x', ts: t0 }).error, /לא נמצאה/);
+
+// ---- problem report is a Log data row; the manager resolves it ----
+const png = 'data:image/jpeg;base64,' + Buffer.from('fakejpeg').toString('base64');
+assert.ok(call({ action: 'issue', code: W, id: 'B-1', ts: t0, gh: 'GH2', worker: 'דנה', category: 'מזיקים', severity: 'גבוהה', desc: '-אקריות' }).ok);
+row = lastLog();
+assert.strictEqual(row[logCol('קוד עבודה')], 'ISSUE');
+assert.strictEqual(row[LOG_HEAD.indexOf('פירוט עבודה ומיקום')], 'מזיקים');
+assert.strictEqual(row[LOG_HEAD.indexOf('הערות / בעיות שנצפו')], "'-אקריות");
+assert.strictEqual(row[logCol('חומרה')], 'גבוהה');
+assert.strictEqual(call({ action: 'resolveIssue', code: W, id: 'B-1', status: 'טופל' }).error, 'נדרש קוד מנהל');
+assert.ok(call({ action: 'resolveIssue', code: M, id: 'B-1', status: 'טופל', by: 'מנהל', solution: 'רוסס' }).ok);
+assert.strictEqual(lastLog()[logCol('סטטוס')], 'טופל');
+assert.strictEqual(lastLog()[logCol('פתרון')], 'רוסס (מנהל)');
+call({ action: 'resolveIssue', code: M, id: 'B-1', status: 'hack' });
+assert.strictEqual(lastLog()[logCol('סטטוס')], 'פתוח', 'unknown status falls back');
+assert.match(call({ action: 'resolveIssue', code: M, id: 'L-1', status: 'טופל' }).error, /לא נמצאה/, 'only problem rows can be resolved');
+
+// ---- photos: manager only, a Log data row with every link in "חומרים / תמונות" ----
+assert.strictEqual(call({ action: 'photoSet', code: W, id: 'P-1', gh: 'GH3', date: t0 }).error, 'נדרש קוד מנהל');
+assert.ok(call({ action: 'photoSet', code: M, id: 'P-1', gh: 'GH3', date: t0, note: 'פריחה', by: 'מנהל' }).ok);
 for (let i = 0; i < 3; i++) assert.ok(call({ action: 'photo', code: M, id: 'P-1', idx: i, photo: png }).ok);
-const ph = main.getSheetByName('תמונות');
-const pcol = (n) => headers['תמונות'].indexOf(n);
-assert.strictEqual(ph.rows[1][pcol('חממה')], 'חממה 1');
-assert.strictEqual(ph.rows[1][pcol('תמונה')].split('\n').length, 3);
+row = lastLog();
+assert.strictEqual(row[LOG_HEAD.indexOf('מספר חממה')], 'חממה 3');
+assert.strictEqual(row[LOG_HEAD.indexOf('חומרים / תמונות')].split('\n').length, 3);
+assert.strictEqual(drive.folders.length, 1, 'photo folder created once');
+assert.ok(codeRow('מזהה תיקיית תמונות ב-Drive')[1], 'folder id saved in Code');
 assert.match(call({ action: 'photo', code: M, id: 'P-404', idx: 0, photo: png }).error, /לא נמצאה/);
 assert.match(call({ action: 'photo', code: M, id: 'P-1', idx: 3, photo: 'garbage' }).error, /לא תקינה/);
 
-// future tasks: manager adds, anyone marks done; bootstrap carries open ones
+// ---- planned works go to Calendar ----
 assert.strictEqual(call({ action: 'taskAdd', code: W, id: 'T-1', gh: 'GH1', text: 'x', due: t0 }).error, 'נדרש קוד מנהל');
-r = call({ action: 'taskAdd', code: M, id: 'T-1', gh: 'GH2', work: 'W01', text: 'האבקה', due: t0 + 86400000, worker: 'דנה' });
-assert.ok(r.ok, r.error);
+assert.ok(call({ action: 'taskAdd', code: M, id: 'T-1', gh: 'GH2', work: 'W09', text: 'ניטור', due: t0 + 86400000, worker: 'יוסי' }).ok);
 assert.match(call({ action: 'taskAdd', code: M, id: 'T-2', gh: 'GH2', text: ' ', due: t0 }).error, /חסר/);
-const tk = main.getSheetByName('משימות');
-const tcol = (n) => headers['משימות'].indexOf(n);
-assert.strictEqual(tk.rows[1][tcol('חממה')], 'חממה 2');
+assert.strictEqual(calendar.rows[1][2], 'חממה 2');
 assert.strictEqual(call({ action: 'bootstrap', code: W }).data.tasks.length, 1);
-assert.ok(call({ action: 'taskDone', code: W, id: 'T-1', by: 'דנה' }).ok);
-assert.strictEqual(tk.rows[1][tcol('סטטוס')], 'בוצע');
+assert.ok(call({ action: 'taskDone', code: W, id: 'T-1', by: 'יוסי' }).ok);
+assert.strictEqual(calendar.rows[1][6], 'בוצע');
 assert.strictEqual(call({ action: 'bootstrap', code: W }).data.tasks.length, 0);
 
-// attendance clock
-r = call({ action: 'shiftIn', code: W, id: 'S-1', worker: 'דנה', ts: t0 - 3600000 });
-assert.ok(r.ok, r.error);
-const att = main.getSheetByName('נוכחות');
-const acol = (n) => headers['נוכחות'].indexOf(n);
-assert.strictEqual(att.rows[1][acol('עובד')], 'דנה');
-assert.strictEqual(att.rows[1][acol('סטטוס')], 'פתוח');
-assert.match(att.formulas['F2'], /ROUND\(\(E2-D2\)\*24,2\)/);
-assert.strictEqual(call({ action: 'shiftIn', code: W, id: 'S-1', worker: 'דנה', ts: t0 }).data.duplicate, true);
-r = call({ action: 'shiftOut', code: W, id: 'S-1', ts: t0 + 8 * 3600000 });
-assert.ok(r.ok, r.error);
-assert.strictEqual(att.rows[1][acol('סטטוס')], 'סגור');
-assert.match(call({ action: 'shiftOut', code: W, id: 'S-x', ts: t0 }).error, /לא נמצאה/);
-
-// warehouse work
-r = call({ action: 'checkIn', code: W, id: 'L-2', worker: 'דנה', gh: 'מחסן', work: 'W12', ts: t0 });
-assert.ok(r.ok, r.error);
-assert.strictEqual(log.rows[log.rows.length - 1][col('חממה')], 'מחסן');
-
-// issue + resolve
-r = call({ action: 'issue', code: W, id: 'B-1', ts: t0, gh: 'GH2', worker: 'דנה', category: 'מזיקים', severity: 'גבוהה', desc: '-אקריות', photo: png });
-assert.ok(r.ok, r.error);
-const issues = main.getSheetByName('בעיות');
-const icol = (n) => headers['בעיות'].indexOf(n);
-assert.strictEqual(issues.rows[1][icol('חממה')], 'חממה 2');
-assert.strictEqual(issues.rows[1][icol('תיאור')], "'-אקריות");
-assert.strictEqual(call({ action: 'resolveIssue', code: W, id: 'B-1', status: 'טופל' }).error, 'נדרש קוד מנהל');
-r = call({ action: 'resolveIssue', code: M, id: 'B-1', status: 'טופל', by: 'מנהל', solution: 'רוסס' });
-assert.ok(r.ok, r.error);
-assert.strictEqual(issues.rows[1][icol('סטטוס')], 'טופל');
-assert.strictEqual(Object.prototype.toString.call(issues.rows[1][icol('תאריך טיפול')]), '[object Date]');
-r = call({ action: 'resolveIssue', code: M, id: 'B-1', status: 'hack' });
-assert.strictEqual(issues.rows[1][icol('סטטוס')], 'פתוח', 'unknown status falls back');
-
-// dashboard serialises dates as epoch ms
+// ---- dashboard splits Log data into work, work days and problems ----
 const d = call({ action: 'dashboard', code: M });
 assert.ok(d.ok, d.error);
-assert.strictEqual(typeof d.data.log[0]['כניסה'], 'number');
-assert.strictEqual(d.data.log.length, 2);
-assert.strictEqual(d.data.issues.length, 1);
+assert.deepStrictEqual(d.data.log.map((x) => x['מזהה'] || 'old'), ['old', 'L-1', 'L-2', 'P-1'], 'work rows + photo set, no SHIFT/ISSUE');
 assert.strictEqual(d.data.attendance.length, 1);
-assert.strictEqual(d.data.photos.length, 1);
+assert.strictEqual(d.data.issues.length, 1);
+assert.deepStrictEqual([d.data.issues[0]['קטגוריה'], d.data.issues[0]['מדווח'], d.data.issues[0]['תיאור']], ['מזיקים', 'דנה', "'-אקריות"]);
+const legacy = d.data.log[0];
+assert.strictEqual(legacy['שעות'], 1.25, 'old time-only hours read as a number');
+assert.strictEqual(new Date(legacy['כניסה']).getHours(), 15);
+assert.strictEqual(new Date(legacy['כניסה']).getDate(), 7);
+assert.strictEqual(typeof d.data.log[1]['כניסה'], 'number');
 
-// report builds a workbook with the three tabs
-r = call({ action: 'report', code: M, from: t0 - 86400000, to: t0 + 86400000 });
-assert.ok(r.ok, r.error);
-assert.match(r.data.url, /sheets\/ss-/);
+// ---- Google Sheets report ----
+const rep = call({ action: 'report', code: M, from: t0 - 86400000 * 5, to: t0 + 86400000 });
+assert.ok(rep.ok, rep.error);
 
-// backup: dated copy, old copies trashed, owner's own files untouched, second owner added, status reported
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'מזהה תיקיית גיבוי ב-Drive', 'ערך': '' }));
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'אימייל בעלים שני', 'ערך': 'second@example.com' }));
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'גיבוי אחרון', 'ערך': '' }));
-put('הגדרות', obj('הגדרות', { 'הגדרה': 'ימים לשמירת גיבויים', 'ערך': 30 }));
+// ---- backup: dated copy, old copies trashed, owner's own files untouched, second owner added ----
+codeRow('אימייל בעלים שני')[1] = 'second@example.com';
 assert.strictEqual(call({ action: 'backup', code: W }).error, 'נדרש קוד מנהל');
-r = call({ action: 'backup', code: M });
+let r = call({ action: 'backup', code: M });
 assert.ok(r.ok, r.error);
 const bfolder = drive.folders.find((f) => f.name === 'חממות וניל - גיבויים');
-assert.ok(bfolder && bfolder.files.length === 1, 'backup copy in its folder');
+assert.ok(bfolder && bfolder.files.length === 1);
 const oldCopy = bfolder.files[0]; oldCopy.created = new Date(Date.now() - 40 * 86400000);
 const mine = { name: 'קובץ שלי', created: new Date(0), trashed: false, getName() { return this.name; }, getDateCreated() { return this.created; }, setTrashed(v) { this.trashed = v; } };
 bfolder.files.push(mine);
 r = call({ action: 'backup', code: M });
 assert.ok(r.ok, r.error);
-assert.strictEqual(oldCopy.trashed, true, 'copy older than 30 days trashed');
+assert.strictEqual(oldCopy.trashed, true);
 assert.strictEqual(mine.trashed, false, "owner's own file untouched");
-assert.strictEqual(r.data.removed, 1);
-assert.ok(drive.editors.some(([, e]) => e === 'second@example.com'), 'second owner added');
+assert.ok(drive.editors.some(([, e]) => e === 'second@example.com'));
 const sys = call({ action: 'dashboard', code: M }).data.system;
 assert.ok(sys.lastBackup > Date.now() - 60000 && sys.secondOwner && sys.driveLimit === 15e9);
 
-// rate limit after 20 bad codes
-for (let i = 0; i < 20; i++) call({ action: 'bootstrap', code: 'bad' + i });
-assert.match(call({ action: 'bootstrap', code: W }).error, /יותר מדי/);
-
-// weather digest: climate row + email with alerts
+// ---- weather digest: email only, no tab ----
+codeRow('אימייל לעדכון יומי')[1] = 'owner@example.com';
 sandbox.weatherDigest();
-const wx = main.getSheetByName('מזג אוויר');
-assert.ok(wx, 'weather tab exists in workbook');
-assert.strictEqual(wx.rows.length, 2);
 assert.strictEqual(sandbox.MailApp.sent.length, 1);
 assert.match(sandbox.MailApp.sent[0].body, /חום של 36/);
 assert.match(sandbox.MailApp.sent[0].body, /לילה קר \(8/);
-sandbox.weatherDigest();
-assert.strictEqual(wx.rows.length, 2, 'one climate row per day');
+assert.deepStrictEqual(main.getSheets().map((s) => s.getName()), tabsBefore, 'still no new tab');
 
+// ---- rate limit after 20 bad codes (last: it locks everyone out for 10 minutes) ----
+for (let i = 0; i < 20; i++) call({ action: 'bootstrap', code: 'bad' + i });
+assert.match(call({ action: 'bootstrap', code: W }).error, /יותר מדי/);
+
+assert.strictEqual(snapshot(), before, 'existing data still untouched at the end');
 console.log('gas harness ok');
