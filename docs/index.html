@@ -59,17 +59,23 @@
   <div class="intro-title">חממות וניל</div>
 </div>
 
-<!-- first run: farm code -->
+<!-- first run: sign in with Google; a farm code is the fallback (and the demo) -->
 <div id="gate" class="gate" hidden>
-  <form id="gateForm" class="stack" autocomplete="off">
+  <div class="stack">
     <img class="mark" src="icons/icon.svg" alt="">
     <h1>חממות וניל</h1>
-    <div class="group">
-      <label class="field"><input id="gateCode" type="password" inputmode="numeric" placeholder="קוד חווה" aria-label="קוד חווה" required></label>
-    </div>
+    <div id="gsi" class="gsi"></div>
     <p id="gateErr" class="error" role="alert"></p>
-    <button class="btn primary big" type="submit">כניסה</button>
-  </form>
+    <details id="codeBox" class="code-box">
+      <summary>כניסה עם קוד</summary>
+      <form id="gateForm" class="stack" autocomplete="off">
+        <div class="group">
+          <label class="field"><input id="gateCode" type="password" autocapitalize="off" spellcheck="false" placeholder="קוד חווה" aria-label="קוד חווה" required></label>
+        </div>
+        <button class="btn big" type="submit">כניסה</button>
+      </form>
+    </details>
+  </div>
 </div>
 
 <div id="app" hidden>
@@ -157,6 +163,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
         התקנה בטלפון
       </button>
+      <button type="button" id="signOutBtn" class="btn plain sign-out" hidden></button>
     </section>
 
     <!-- ===== issue ===== -->
@@ -175,8 +182,9 @@
     <section id="dash" class="view wide" hidden>
       <header class="bar"><h1>דשבורד</h1><span id="syncState" class="sync" aria-live="polite"></span></header>
 
+      <p id="mgrNo" class="empty" hidden>הדשבורד פתוח למנהלים בלבד</p>
       <form id="mgrForm" class="stack" hidden autocomplete="off" style="max-width:360px">
-        <div class="group"><label class="field"><input id="mgrCode" type="password" inputmode="numeric" placeholder="קוד מנהל" aria-label="קוד מנהל" required></label></div>
+        <div class="group"><label class="field"><input id="mgrCode" type="password" autocapitalize="off" spellcheck="false" placeholder="קוד מנהל" aria-label="קוד מנהל" required></label></div>
         <p id="mgrErr" class="error" role="alert"></p>
         <button class="btn primary big" type="submit">פתיחת הדשבורד</button>
       </form>
@@ -191,12 +199,13 @@
           </div>
           <button type="button" id="tasksBtn" class="btn primary">עבודות עתידיות <span id="tasksCount" class="count" hidden></span></button>
           <details class="more">
-            <summary class="btn">דוחות וגיבוי</summary>
+            <summary class="btn">עוד</summary>
             <div class="menu">
               <button type="button" id="xlsBtn" class="btn plain">ייצוא ל-Excel</button>
               <button type="button" id="gsBtn" class="btn plain">דוח Google Sheets</button>
               <button type="button" id="qrBtn" class="btn plain">הדפסת QR</button>
               <button type="button" id="backupBtn" class="btn plain">גיבוי עכשיו</button>
+              <button type="button" id="usersBtn" class="btn plain">הרשאות</button>
             </div>
           </details>
           <button type="button" id="refreshBtn" class="btn plain" aria-label="רענון">
@@ -305,6 +314,21 @@
   </div>
 </dialog>
 
+<dialog id="usersDlg" aria-labelledby="usersTitle">
+  <div class="sheet-head"><h2 id="usersTitle">הרשאות</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
+  <div class="sheet-body stack">
+    <form id="uForm" class="stack" autocomplete="off">
+      <div class="group">
+        <input id="uEmail" class="note" type="email" dir="ltr" placeholder="name@gmail.com" aria-label="מייל של חשבון Google" required>
+        <input id="uName" class="note" type="text" maxlength="40" placeholder="שם, כמו שיופיע בגיליון" aria-label="שם" required>
+      </div>
+      <div id="uRole" class="seg" role="radiogroup" aria-label="תפקיד"></div>
+      <button type="submit" id="uAdd" class="btn primary big">הוספה</button>
+    </form>
+    <ul id="uList" class="list"></ul>
+  </div>
+</dialog>
+
 <dialog id="installDlg" aria-labelledby="installTitle">
   <div class="sheet-head"><h2 id="installTitle">התקנה במסך הבית</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
   <div class="sheet-body stack">
@@ -325,6 +349,7 @@
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="qrSheet" aria-hidden="true"></div>
 
+<script src="https://accounts.google.com/gsi/client" async onload="window.onGsi && onGsi()"></script>
 <script src="config.js"></script>
 <script>
   // ?demo turns on a self-contained demo (no server); it is remembered until ?demo=off

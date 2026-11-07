@@ -33,6 +33,8 @@
 
   const state = {
     code: store.get('code', ''),
+    session: store.get('session', ''), // Google sign-in; the code is the fallback
+    me: store.get('me', null), // { name, email } of the signed-in account
     role: store.get('role', ''),
     boot: store.get('boot', null),
     worker: store.get('worker', ''),
@@ -50,7 +52,7 @@
   // ---------- api ----------
   class NetError extends Error {}
   async function api(action, payload, code) {
-    const body = Object.assign({ action, code: code || state.code }, payload);
+    const body = Object.assign({ action }, state.session && !code ? { session: state.session } : { code: code || state.code }, payload);
     let j;
     if (window.DEMO_API) {
       j = await window.DEMO_API(body);
@@ -65,7 +67,9 @@
       try { j = await res.json(); } catch (e) { throw new NetError('השרת לא זמין כרגע'); }
     }
     // retry: Google was busy or unreachable, so the report stays in the queue instead of being dropped
+    if (j.signin) signOut(j.error);
     if (!j.ok) throw new (j.retry ? NetError : Error)(j.error || 'שגיאה');
+    if (j.name && state.me && j.name !== state.me.name) { state.me.name = j.name; store.set('me', state.me); }
     return j;
   }
 
@@ -198,15 +202,55 @@
   }
 
   // ---------- gate ----------
+  const authed = () => !!(state.session || state.code);
+  function enter(j) {
+    Object.assign(state, { role: j.role, boot: j.data });
+    store.set('role', j.role); store.set('boot', j.data);
+    showApp();
+  }
+  async function onGoogle(resp) {
+    $('gateErr').textContent = '';
+    try {
+      const j = await api('login', { credential: resp.credential }, '-');
+      Object.assign(state, { session: j.data.session, me: { name: j.data.name, email: j.data.email }, code: '' });
+      store.set('session', state.session); store.set('me', state.me); store.del('code');
+      enter(await api('bootstrap', {}));
+    } catch (err) {
+      $('gateErr').textContent = err instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה.' : err.message;
+    }
+  }
+  // Google's script loads on its own; whichever comes last (it, or the gate) draws the button
+  window.onGsi = () => { if (!$('gate').hidden) initGoogle(); };
+  function initGoogle() {
+    const id = window.APP_CONFIG.googleClientId;
+    if (!id || window.DEMO_API || !(window.google && google.accounts && google.accounts.id)) return;
+    google.accounts.id.initialize({ client_id: id, callback: onGoogle, ux_mode: 'popup', use_fedcm_for_prompt: true });
+    google.accounts.id.renderButton($('gsi'), { theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'filled_black' : 'outline', size: 'large', shape: 'pill', text: 'signin_with', locale: 'he', width: 280 });
+  }
+  function signOut(msg) {
+    if (state.session) api('logout', {}).catch(() => {});
+    Object.assign(state, { session: '', me: null, code: '', boot: null, dash: null });
+    ['session', 'me', 'code', 'boot', 'role'].forEach((k) => store.del(k));
+    if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
+    $('app').hidden = true;
+    $('gate').hidden = false;
+    $('gateErr').textContent = msg || '';
+    initGoogle();
+  }
+  $('signOutBtn').onclick = () => {
+    if (state.active || state.shift) { toast('אפשר להתנתק אחרי היציאה מהעבודה'); return; }
+    signOut();
+  };
+
   $('gateForm').onsubmit = async (e) => {
     e.preventDefault();
     const code = $('gateCode').value.trim();
     $('gateErr').textContent = '';
     try {
       const j = await api('bootstrap', {}, code);
-      Object.assign(state, { code, role: j.role, boot: j.data });
-      store.set('code', code); store.set('role', j.role); store.set('boot', j.data);
-      showApp();
+      state.code = code;
+      store.set('code', code);
+      enter(j);
     } catch (err) {
       $('gateErr').textContent = err instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה.' : err.message;
     }
@@ -251,9 +295,11 @@
   const workerList = () => (state.boot && state.boot.workers) || [];
   function renderReport() {
     const list = workerList();
-    // one worker on the farm: he is always the one reporting
-    if (list.length === 1 && state.worker !== list[0] && !state.active && !state.shift) { state.worker = list[0]; store.set('worker', state.worker); }
-    $('who').hidden = list.length === 1;
+    // signed in with Google: the account's name reports; with one worker on the farm, he does
+    if (state.me) { state.worker = state.me.name; store.set('worker', state.worker); } else if (list.length === 1 && state.worker !== list[0] && !state.active && !state.shift) { state.worker = list[0]; store.set('worker', state.worker); }
+    $('who').hidden = !!state.me || list.length === 1;
+    $('signOutBtn').hidden = !state.me;
+    $('signOutBtn').textContent = state.me ? 'התנתקות · ' + state.me.name : '';
     $('who').textContent = state.worker || 'מי מדווח?';
     renderWeatherStrip();
     renderShift();
@@ -523,7 +569,8 @@
   // ---------- dashboard ----------
   function openDash() {
     const isMgr = state.role === 'manager';
-    $('mgrForm').hidden = isMgr;
+    $('mgrForm').hidden = isMgr || !!state.session;
+    $('mgrNo').hidden = isMgr || !state.session;
     $('dashBody').hidden = !isMgr || !state.dash;
     if (isMgr) loadDash();
   }
@@ -922,6 +969,35 @@
   }
   $('tList').onclick = async (e) => { const b = e.target.closest('[data-done]'); if (b && await markDone(b.dataset.done, state.dash.tasks)) renderTasks(); };
 
+  // ---------- users: who may sign in, and as what ----------
+  const ROLES = [{ v: 'worker', t: 'עובד' }, { v: 'manager', t: 'מנהל' }];
+  let uRole = 'worker';
+  function renderUsers(list) {
+    radios($('uRole'), ROLES, uRole, (v) => { uRole = v; });
+    $('uList').innerHTML = list.map((u) => `<li><div class="main">${esc(u.name)}<div class="sub" dir="ltr">${esc(u.email)}</div></div>
+      ${u.owner ? '<span class="pill">בעלים</span>' : `<select data-role="${esc(u.email)}" data-name="${esc(u.name)}" aria-label="תפקיד של ${esc(u.name)}">${ROLES.map((r) => `<option value="${r.v}"${r.v === u.role ? ' selected' : ''}>${r.t}</option>`).join('')}</select>
+      <button type="button" class="btn plain danger" data-del="${esc(u.email)}" aria-label="הסרת ${esc(u.name)}">הסרה</button>`}</li>`).join('');
+  }
+  async function usersCall(action, payload) {
+    try { renderUsers((await api(action, payload)).data); return true; } catch (e) { toast(e instanceof NetError ? 'אין חיבור' : esc(e.message)); return false; }
+  }
+  $('usersBtn').onclick = () => { $('uList').innerHTML = ''; $('usersDlg').showModal(); usersCall('users', {}); };
+  $('uForm').onsubmit = async (e) => {
+    e.preventDefault();
+    $('uAdd').disabled = true;
+    if (await usersCall('userSet', { email: $('uEmail').value, name: $('uName').value, role: uRole })) { $('uEmail').value = ''; $('uName').value = ''; toast('נוסף. הוא נכנס עם Google'); }
+    $('uAdd').disabled = false;
+  };
+  $('uList').onchange = (e) => { const s = e.target.closest('[data-role]'); if (s) usersCall('userSet', { email: s.dataset.role, name: s.dataset.name, role: s.value }); };
+  $('uList').onclick = (e) => {
+    const b = e.target.closest('[data-del]');
+    if (!b) return;
+    // a second tap confirms; the viewer has no confirm() dialog
+    if (b.dataset.armed) { usersCall('userDel', { email: b.dataset.del }); return; }
+    b.dataset.armed = '1'; b.textContent = 'להסיר?';
+    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = 'הסרה'; } }, 3000);
+  };
+
   // a worker sees open tasks for them (or for anyone) in the coming week
   function renderMyTasks() {
     const list = openTasks(state.boot && state.boot.tasks).filter((t) => (!t['עובד'] || t['עובד'] === state.worker) && VG.daysBetween(Date.now(), t['תאריך ביצוע']) <= 7);
@@ -1140,7 +1216,7 @@
     el.textContent = cls === 'off' ? 'אין חיבור' : lastSync ? 'מסונכרן ' + hhmm(lastSync) : '';
   }
   async function sync(force) {
-    if (syncing || document.hidden || !state.code) return;
+    if (syncing || document.hidden || !authed()) return;
     if (!force && Date.now() - lastSync < SYNC_MS - 1000) return;
     syncing = true;
     markSync('busy');
@@ -1187,8 +1263,10 @@
   }
   if (window.DEMO_API) $('gateErr').textContent = 'מצב הדגמה · קוד עובדים 1234 · קוד מנהל 9876';
 
-  if (!state.code || !state.boot) {
+  if (!authed() || !state.boot) {
     $('gate').hidden = false;
+    initGoogle();
+    if (window.DEMO_API) $('codeBox').open = true;
   } else {
     showApp();
     // refresh lists in the background; a changed code sends people back to the gate
@@ -1197,7 +1275,7 @@
       store.set('boot', j.data); store.set('role', j.role);
       if (!state.active) renderReport();
     }).catch((e) => {
-      if (!(e instanceof NetError)) { store.del('code'); state.code = ''; $('app').hidden = true; $('gate').hidden = false; $('gateErr').textContent = e.message; }
+      if (!(e instanceof NetError) && $('gate').hidden) signOut(e.message);
     });
   }
 
