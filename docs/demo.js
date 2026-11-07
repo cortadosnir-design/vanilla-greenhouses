@@ -98,6 +98,7 @@
       case 'issue':
         issues.push({ 'מזהה': req.id, 'תאריך': req.ts, 'חממה': (greenhouses.find((g) => g.id === req.gh) || { name: req.gh }).name, 'מדווח': req.worker, 'קטגוריה': req.category, 'חומרה': req.severity, 'תיאור': req.desc, 'תמונה': '', 'סטטוס': 'פתוח', 'פתרון': '' });
         return { ok: true, role, data: { id: req.id } };
+      case 'stamp': return { ok: true, role, data: { v: String(Date.now()) } };
       case 'dashboard': return { ok: true, role, data: Object.assign({ log, issues, attendance, photos, tasks, system: { lastBackup: Date.now() - 14 * 3600000, driveUsed: 3.4e9, driveLimit: 16106127360, secondOwner: true } }, base) };
       case 'resolveIssue': {
         const r = issues.find((x) => x['מזהה'] === req.id);

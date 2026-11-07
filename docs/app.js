@@ -1133,7 +1133,7 @@
 
   // ---------- live sync: what changes in the sheet shows up here, and what is done here reaches the sheet ----------
   const SYNC_MS = 20000;
-  let lastSync = 0, syncing = false;
+  let lastSync = 0, syncing = false, lastStamp = '';
   function markSync(cls) {
     const el = $('syncState');
     el.className = 'sync ' + cls;
@@ -1146,7 +1146,13 @@
     markSync('busy');
     try {
       await flush();
-      if (!$('dash').hidden && state.role === 'manager') {
+      // a tiny request first: the data is re-read only when the file changed (in the app or by hand)
+      const st = await api('stamp', {});
+      const onDash = !$('dash').hidden && state.role === 'manager';
+      const key = st.data.v + (onDash ? ':dash' : ':boot');
+      if (key === lastStamp) { lastSync = Date.now(); markSync(''); return; }
+      lastStamp = key;
+      if (onDash) {
         const j = await api('dashboard', {});
         if (JSON.stringify(j.data) !== JSON.stringify(state.dash)) { state.dash = j.data; $('dashBody').hidden = false; renderDash(); }
       } else {
