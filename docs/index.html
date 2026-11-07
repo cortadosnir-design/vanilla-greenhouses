@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=1794077000">
+  <link rel="stylesheet" href="styles.css?v=1794077939">
 </head>
 <body>
 
@@ -106,7 +106,8 @@
 
       <div id="idle" class="stack">
         <div id="ghSeg" class="seg" role="radiogroup" aria-label="חממה"></div>
-        <div class="group"><select id="workSel" aria-label="עבודה"></select></div>
+        <div id="workTiles" class="tiles" role="radiogroup" aria-label="עבודה"></div>
+        <div id="workMore" class="group" hidden><select id="workSel" aria-label="עבודה"></select></div>
       </div>
 
       <div id="activeLive" hidden>
@@ -126,7 +127,8 @@
 
       <div id="active" class="stack" hidden>
         <div class="group">
-          <label id="qtyRow" class="field" hidden><span id="qtyUnit"></span><input id="qty" type="number" inputmode="decimal" min="0" step="any"></label>
+          <div id="qtyRow" class="field qty" hidden><span id="qtyUnit"></span>
+            <div class="stepper"><button type="button" data-step="-1" aria-label="פחות אחד">−</button><input id="qty" type="number" inputmode="decimal" min="0" step="any" aria-labelledby="qtyUnit"><button type="button" data-step="1" aria-label="עוד אחד">+</button><button type="button" data-step="10" aria-label="עוד עשרה">+10</button></div></div>
           <textarea id="notes" rows="3" placeholder="הערות" aria-label="הערות"></textarea>
           <label class="photo">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
@@ -142,10 +144,10 @@
         <ul id="myTasksList" class="list"></ul>
       </section>
 
-      <section class="day card" aria-labelledby="dayTitle">
-        <div class="day-head"><h2 id="dayTitle">היום שלי</h2><span id="daySum" class="sub"></span></div>
+      <details id="dayBox" class="day card">
+        <summary class="day-head"><h2 id="dayTitle">היום שלי</h2><span id="daySum" class="sub"></span></summary>
         <ol id="dayList" class="timeline"></ol>
-      </section>
+      </details>
       <button type="button" id="installBtn" class="btn install" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
         התקנה בטלפון
@@ -177,6 +179,12 @@
       </form>
 
       <div id="dashBody" hidden>
+        <div id="paneSeg" class="seg pane-seg" role="radiogroup" aria-label="תצוגה">
+          <button type="button" role="radio" data-pane="today">היום</button>
+          <button type="button" role="radio" data-pane="gh">חממות</button>
+          <button type="button" role="radio" data-pane="log">יומן</button>
+          <button type="button" role="radio" data-pane="photos">תמונות</button>
+        </div>
         <div class="toolbar">
           <div id="rangeSeg" class="seg" role="radiogroup" aria-label="טווח תאריכים">
             <button type="button" role="radio" data-range="7">שבוע</button>
@@ -200,29 +208,29 @@
           </button>
         </div>
 
-        <p id="sysLine" class="sys"></p>
-        <div id="nowCard" class="now" aria-live="polite"></div>
-        <section id="kpis" class="kpis" aria-label="סיכום הטווח"></section>
-        <div id="ghCards" class="ghs"></div>
+        <p id="sysLine" class="sys" data-in="today"></p>
+        <div id="nowCard" class="now" aria-live="polite" data-in="today"></div>
+        <section id="kpis" class="kpis" aria-label="סיכום הטווח" data-in="today"></section>
+        <div id="ghCards" class="ghs" data-in="gh"></div>
 
         <div class="dash-grid">
-          <article class="card span-2 journey-card">
+          <article class="card span-2 journey-card" data-in="gh">
             <div class="card-head"><h2>מסלול הוניל</h2><span class="sub">מהאבקה לקטיף, 8 עד 9 חודשים</span></div>
             <div id="journey" class="journey"></div>
           </article>
-          <article class="card span-2">
+          <article class="card span-2" data-in="log">
             <div class="card-head"><h2>שעות וביקורים</h2><div id="chartLegend" class="legend"></div></div>
             <div id="hoursChart" class="chart"></div>
             <div id="workBars" class="bars"></div>
           </article>
-          <article class="card"><div class="card-head"><h2>מה מתעכב</h2><span id="dueCount" class="pill late" hidden></span></div><ul id="dueList" class="list"></ul></article>
-          <article class="card"><h2>בעיות</h2><ul id="issueList" class="list"></ul></article>
-          <article class="card span-2 wx-card" id="wxCard" aria-label="מזג אוויר בשניר" hidden></article>
-          <article class="card span-2">
+          <article class="card" data-in="today"><div class="card-head"><h2>מה מתעכב</h2><span id="dueCount" class="pill late" hidden></span></div><ul id="dueList" class="list"></ul></article>
+          <article class="card" data-in="today"><h2>בעיות</h2><ul id="issueList" class="list"></ul></article>
+          <article class="card span-2 wx-card" id="wxCard" aria-label="מזג אוויר בשניר" data-in="today" hidden></article>
+          <article class="card span-2" data-in="log">
             <div class="card-head"><h2>מזג האוויר מול העבודה</h2><span class="sub">טמפרטורה בשניר וביקורים בכל יום</span></div>
             <div id="wxHistory" class="chart"></div>
           </article>
-          <article class="card span-2">
+          <article class="card span-2" data-in="photos">
             <div class="card-head"><h2>גלריה</h2><div id="galGh" class="seg small" role="radiogroup" aria-label="חממה"></div></div>
             <div id="gallery" class="gallery"></div>
             <details class="upload-box">
@@ -242,7 +250,7 @@
               </div>
             </details>
           </article>
-          <article class="card span-2">
+          <article class="card span-2" data-in="gh">
             <h2>השוואה בין חממות</h2>
             <div class="table-wrap"><table class="compare">
               <thead><tr><th>חממה</th><th>תאריך אחרון</th><th>שעות</th><th>ביקורים</th><th>פרחים הואבקו</th><th>תרמילים</th><th>בעיות חדשות</th></tr></thead>
@@ -250,14 +258,14 @@
             </table></div>
             <p id="compareNote" class="sub" style="margin:10px 0 0"></p>
           </article>
-          <article class="card span-2">
+          <article class="card span-2" data-in="log">
             <h2>יומן עבודה</h2>
             <div class="filters">
               <select id="fGh" aria-label="סינון לפי חממה"></select>
               <select id="fWorker" aria-label="סינון לפי עובד"></select>
             </div>
             <div class="table-wrap"><table>
-              <thead><tr><th>תאריך</th><th>עובד</th><th>חממה</th><th>עבודה</th><th>שעות</th><th>כמות</th><th>תמונה</th></tr></thead>
+              <thead><tr><th>תאריך</th><th>עובד</th><th>חממה</th><th>עבודה</th><th>שעות</th><th>כמות</th><th>תמונה</th><th aria-label="עריכה"></th></tr></thead>
               <tbody id="logBody"></tbody>
             </table></div>
           </article>
@@ -330,20 +338,37 @@
 <dialog id="lightbox" class="lightbox" aria-labelledby="lbCap">
   <div class="sheet-head"><h2 id="lbCap"></h2><button type="button" class="btn plain" data-close>סגירה</button></div>
   <img id="lbImg" alt="">
-  <div class="sheet-body"><a id="lbLink" class="btn" target="_blank" rel="noopener">פתיחה ב-Drive</a></div>
+  <div class="sheet-body pair"><a id="lbLink" class="btn" target="_blank" rel="noopener">פתיחה ב-Drive</a><button type="button" id="lbEdit" class="btn">עריכה</button></div>
+</dialog>
+
+<dialog id="editDlg" aria-labelledby="editTitle">
+  <div class="sheet-head"><h2 id="editTitle"></h2><button type="button" class="btn plain" data-close>ביטול</button></div>
+  <div class="sheet-body stack">
+    <div id="eTimes" class="group">
+      <label class="field"><span>כניסה</span><input id="eStart" type="time"></label>
+      <label class="field" id="eEndRow"><span>יציאה</span><input id="eEnd" type="time"></label>
+    </div>
+    <div class="group">
+      <label id="eQtyRow" class="field"><span id="eQtyUnit">כמות</span><input id="eQty" type="number" inputmode="decimal" min="0" step="any"></label>
+      <textarea id="eNotes" rows="3" placeholder="הערות" aria-label="הערות"></textarea>
+    </div>
+    <div id="ePhotos" class="thumbs edit-photos"></div>
+    <button type="button" id="eSave" class="btn primary big">שמירה</button>
+    <button type="button" id="eDelete" class="btn plain danger">מחיקת הרשומה</button>
+  </div>
 </dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="qrSheet" aria-hidden="true"></div>
 
 <script src="https://accounts.google.com/gsi/client" async onload="window.onGsi && onGsi()"></script>
-<script src="config.js?v=1794077000"></script>
+<script src="config.js?v=1794077939"></script>
 <script>
   // ?demo turns on a self-contained demo (no server); it is remembered until ?demo=off
   (function () { try { var q = location.search; if (/[?&]demo=off/.test(q)) localStorage.removeItem('vg.demo'); else if (/[?&]demo/.test(q)) localStorage.setItem('vg.demo', '1'); if (localStorage.getItem('vg.demo')) document.write('<script src="demo.js"><\/script>'); } catch (e) {} })();
 </script>
-<script src="logic.js?v=1794077000"></script>
-<script src="weather.js?v=1794077000"></script>
-<script src="app.js?v=1794077000"></script>
+<script src="logic.js?v=1794077939"></script>
+<script src="weather.js?v=1794077939"></script>
+<script src="app.js?v=1794077939"></script>
 </body>
 </html>

@@ -319,9 +319,32 @@
     sel.innerHTML = '<option value="">בחירת עבודה</option>' + Object.keys(groups).map((c) =>
       `<optgroup label="${esc(c)}">${groups[c].map((w) => `<option value="${esc(w.code)}">${esc(w.name)}</option>`).join('')}</optgroup>`).join('');
     sel.value = prev;
-    sel.onchange = validateIn;
+    sel.onchange = () => { drawTiles(); validateIn(); };
+    drawTiles();
     validateIn();
   }
+
+  // the works Gershon does most, as big tiles; the rest of the catalogue behind "עבודה אחרת"
+  const FAVORITES = ['W01', 'W03', 'W09', 'W07', 'W11'];
+  function topWorks() {
+    const use = store.get('workUse', {});
+    const rank = (c) => (FAVORITES.includes(c) ? FAVORITES.length - FAVORITES.indexOf(c) : 0) / 100 + (use[c] || 0);
+    return works().map((w) => w.code).sort((a, b) => rank(b) - rank(a)).slice(0, 5);
+  }
+  function drawTiles() {
+    const sel = $('workSel'), top = topWorks();
+    const cur = sel.value ? (top.includes(sel.value) ? sel.value : '*') : (!$('workMore').hidden ? '*' : '');
+    $('workMore').hidden = cur !== '*';
+    radios($('workTiles'), top.map((c) => ({ v: c, t: workBy(c).name })).concat([{ v: '*', t: 'עבודה אחרת' }]), cur, (v) => {
+      if (v === '*') { sel.value = ''; $('workMore').hidden = false; sel.focus(); } else { sel.value = v; $('workMore').hidden = true; }
+      validateIn();
+    });
+  }
+  $('qtyRow').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-step]');
+    if (!b) return;
+    $('qty').value = String(Math.max(0, (Number($('qty').value) || 0) + Number(b.dataset.step)));
+  });
 
   function validateIn() {
     if (state.gh && !ghs().some((g) => g.id === state.gh)) { state.gh = ''; store.del('gh'); radios($('ghSeg'), ghs().map((g) => ({ v: g.id, t: g.name })), '', (v) => { state.gh = v; store.set('gh', v); validateIn(); }); }
@@ -337,6 +360,9 @@
     const w = workBy($('workSel').value);
     const warehouse = w.location === WAREHOUSE;
     const gh = warehouse ? { id: WAREHOUSE, name: WAREHOUSE } : ghs().find((g) => g.id === state.gh);
+    const use = store.get('workUse', {});
+    use[w.code] = (use[w.code] || 0) + 1;
+    store.set('workUse', use);
     const active = { id: uid('L'), gh: gh.id, ghName: gh.name, work: w.code, workName: w.name, unit: w.unit, start: Date.now() };
     state.active = active;
     store.set('active', active);
@@ -430,9 +456,9 @@
           const bits = [esc(e.gh), hhmm(e.t - e.mins * 60000) + '–' + hhmm(e.t), VG.hoursText(e.mins / 60)];
           if (e.qty !== '' && e.qty != null) bits.push(esc(e.qty) + ' ' + esc(e.unit || ''));
           if (e.photos) bits.push(e.photos === 1 ? 'תמונה' : e.photos + ' תמונות');
-          return `<li>${t}<div class="ev"><strong>${esc(e.work)}</strong><span class="sub">${bits.map((b) => `<bdi class="nw">${b}</bdi>`).join(' · ')}</span>${e.notes ? `<span class="sub">${esc(e.notes)}</span>` : ''}</div></li>`;
+          return `<li>${t}<div class="ev" data-edit="${esc(e.id)}" role="button" tabindex="0"><strong>${esc(e.work)}</strong><span class="sub">${bits.map((b) => `<bdi class="nw">${b}</bdi>`).join(' · ')}</span>${e.notes ? `<span class="sub">${esc(e.notes)}</span>` : ''}</div></li>`;
         }
-        case 'issue': return `<li>${t}<div class="ev issue"><strong>דיווח בעיה: ${esc(e.cat)}</strong><span class="sub">${esc(e.gh || '')} · חומרה ${esc(e.sev)}</span></div></li>`;
+        case 'issue': return `<li>${t}<div class="ev issue"${e.id ? ` data-edit="${esc(e.id)}" role="button" tabindex="0"` : ''}><strong>דיווח בעיה: ${esc(e.cat)}</strong><span class="sub">${esc(e.gh || '')} · חומרה ${esc(e.sev)}</span></div></li>`;
         default: return '';
       }
     });
@@ -515,7 +541,7 @@
     const s = state.issue;
     const payload = { id: uid('B'), ts: Date.now(), gh: s.gh, worker: state.worker, category: s.cat, severity: s.sev, desc: $('issueDesc').value.trim() };
     if (!queuePut('issue', payload)) { toast('אין מקום במכשיר'); return; }
-    journal({ t: payload.ts, who: state.worker, kind: 'issue', gh: (ghs().find((g) => g.id === s.gh) || {}).name, cat: s.cat, sev: s.sev });
+    journal({ t: payload.ts, who: state.worker, kind: 'issue', id: payload.id, gh: (ghs().find((g) => g.id === s.gh) || {}).name, cat: s.cat, sev: s.sev });
     state.issue = { gh: s.gh, cat: '', sev: 'בינונית' };
     $('issueDesc').value = '';
     renderIssue();
@@ -567,6 +593,22 @@
     state.range = b.dataset.range;
     store.set('range', state.range);
     renderDash();
+  };
+
+  // one pane of the dashboard at a time, remembered on this phone
+  let pane = store.get('pane', 'today');
+  function showPane() {
+    $('dashBody').dataset.pane = pane;
+    setChecked($('paneSeg'), 'pane', pane);
+  }
+  showPane();
+  $('paneSeg').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    pane = b.dataset.pane;
+    store.set('pane', pane);
+    showPane();
+    renderDash(); // charts are drawn at the width they now have
   };
 
   function rangeRows() {
@@ -824,7 +866,7 @@
       return `<section class="day"><h3>יום ${DAY_NAMES[new Date(day.t).getDay()]} ${fmtDate(day.t)} ${chip}</h3><div class="grid">${day.items.map(({ r, p, t }) => {
         const cap = `${r['חממה'] || ''} · ${hhmm(t)}${r['עבודה'] ? ' · ' + r['עבודה'] : r['קטגוריה'] ? ' · ' + r['קטגוריה'] : ''}`;
         const thumb = window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + p.id + '&sz=w400';
-        return `<button type="button" data-id="${esc(p.id)}" data-cap="${esc(cap)}"><img loading="lazy" src="${thumb}" alt="${esc(cap)}"><figcaption>${esc((r['חממה'] || '') + ' · ' + hhmm(t))}</figcaption></button>`;
+        return `<button type="button" data-id="${esc(p.id)}" data-row="${esc(r['מזהה'] || '')}" data-cap="${esc(cap)}"><img loading="lazy" src="${thumb}" alt="${esc(cap)}"><figcaption>${esc((r['חממה'] || '') + ' · ' + hhmm(t))}</figcaption></button>`;
       }).join('')}</div></section>`;
     }).join('') || '<p class="empty">אין תמונות בטווח הזה</p>';
   }
@@ -836,7 +878,104 @@
     $('lbImg').alt = b.dataset.cap;
     $('lbCap').textContent = b.dataset.cap;
     $('lbLink').href = 'https://drive.google.com/file/d/' + encodeURIComponent(id) + '/view';
+    $('lbEdit').hidden = !b.dataset.row;
+    $('lbEdit').dataset.edit = b.dataset.row;
     $('lightbox').showModal();
+  };
+
+  // ---------- change or delete something already reported ----------
+  // the server keeps the rules (a worker: his own rows from the last week); a deleted row stays in the sheet, marked
+  let editing = null;
+  const timeOf = (ms) => (typeof ms === 'number' ? hhmm(ms) : '');
+  const atTime = (base, hm) => { const [h, m] = hm.split(':').map(Number); const d = new Date(base); d.setHours(h, m, 0, 0); return d.getTime(); };
+  const armed = (b, label, again) => {
+    if (b.dataset.armed) return true;
+    b.dataset.armed = '1'; b.textContent = again;
+    setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = label; } }, 3000);
+    return false;
+  };
+  function drawEdit() {
+    const r = editing;
+    const visit = typeof r['כניסה'] === 'number';
+    $('editTitle').textContent = [r['עבודה'] || r['קטגוריה'], r['חממה'], fmtDate(r['כניסה'] || r['תאריך'])].filter(Boolean).join(' · ');
+    $('eTimes').hidden = !visit;
+    $('eStart').value = timeOf(r['כניסה']);
+    $('eEnd').value = timeOf(r['יציאה']);
+    $('eEndRow').hidden = r['סטטוס'] === 'פתוח';
+    $('eQtyRow').hidden = !(r['יחידה'] || (r['כמות'] !== '' && r['כמות'] != null));
+    $('eQtyUnit').textContent = r['יחידה'] ? 'כמה ' + r['יחידה'] + '?' : 'כמות';
+    $('eQty').value = r['כמות'] == null ? '' : r['כמות'];
+    $('eNotes').value = r['הערות'] || '';
+    drawEditPhotos();
+    $('eDelete').textContent = 'מחיקת הרשומה';
+    delete $('eDelete').dataset.armed;
+  }
+  function drawEditPhotos() {
+    $('ePhotos').innerHTML = VG.photoLinks(editing['תמונה']).map((p) => `<span class="thumb"><img src="${window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(p.id) + '&sz=w200'}" alt="תמונה">
+      <button type="button" class="del" data-url="${esc(p.url)}" aria-label="מחיקת התמונה">מחיקה</button></span>`).join('');
+    $('ePhotos').hidden = !$('ePhotos').children.length;
+  }
+  async function openEdit(id) {
+    if (!id) return;
+    try {
+      editing = (await api('rowGet', { id, worker: state.worker })).data;
+      drawEdit();
+      if (!$('editDlg').open) $('editDlg').showModal();
+    } catch (e) { toast(e instanceof NetError ? 'אין חיבור. אפשר לערוך כשיש קליטה' : esc(e.message)); }
+  }
+  // after a change: the journal of today and the dashboard show what the sheet now holds
+  function afterEdit(id, row) {
+    const j = store.get('journal', { day: '', items: [] });
+    j.items = row ? j.items.map((e) => (e.id !== id ? e : Object.assign(e, e.kind === 'out' && typeof row['כניסה'] === 'number' && typeof row['יציאה'] === 'number'
+      ? { t: row['יציאה'], mins: Math.round((row['יציאה'] - row['כניסה']) / 60000) } : {}, { qty: row['כמות'], notes: row['הערות'], photos: VG.photoLinks(row['תמונה']).length })))
+      : j.items.filter((e) => e.id !== id);
+    store.set('journal', j);
+    renderDay();
+    if (state.dash) loadDash();
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-edit]');
+    if (!b || !b.dataset.edit) return;
+    if ($('lightbox').open) $('lightbox').close();
+    openEdit(b.dataset.edit);
+  });
+  $('dayList').addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset.edit) { e.preventDefault(); openEdit(e.target.dataset.edit); } });
+  $('eSave').onclick = async () => {
+    const r = editing, out = { id: r['מזהה'], worker: state.worker, notes: $('eNotes').value.trim() };
+    if (!$('eQtyRow').hidden) out.qty = $('eQty').value;
+    if (!$('eTimes').hidden && $('eStart').value) out.start = atTime(r['כניסה'], $('eStart').value);
+    if (!$('eTimes').hidden && !$('eEndRow').hidden && $('eEnd').value) {
+      out.end = atTime(r['יציאה'] || r['כניסה'], $('eEnd').value);
+      if (out.start && out.end < out.start) out.end += VG.DAY; // past midnight
+    }
+    $('eSave').disabled = true;
+    try {
+      const j = await api('rowEdit', out);
+      $('editDlg').close();
+      toast('השינוי נשמר');
+      afterEdit(out.id, j.data);
+    } catch (e) { toast(e instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה' : esc(e.message)); } finally { $('eSave').disabled = false; }
+  };
+  $('eDelete').onclick = async () => {
+    const b = $('eDelete');
+    if (!armed(b, 'מחיקת הרשומה', 'למחוק את הרשומה?')) return;
+    try {
+      await api('rowDelete', { id: editing['מזהה'], worker: state.worker });
+      $('editDlg').close();
+      toast('הרשומה נמחקה');
+      afterEdit(editing['מזהה'], null);
+    } catch (e) { toast(e instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה' : esc(e.message)); }
+  };
+  $('ePhotos').onclick = async (e) => {
+    const b = e.target.closest('button[data-url]');
+    if (!b || !armed(b, 'מחיקה', 'למחוק?')) return;
+    try {
+      const j = await api('photoDelete', { id: editing['מזהה'], worker: state.worker, url: b.dataset.url });
+      editing['תמונה'] = j.data.photos.join('\n');
+      drawEditPhotos(); // the fields keep what was typed
+      toast('התמונה נמחקה');
+      afterEdit(editing['מזהה'], editing);
+    } catch (err) { toast(err instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה' : esc(err.message)); }
   };
 
   // ---------- backup status ----------
@@ -1031,8 +1170,9 @@
       <td>${esc(r['עבודה'] || r['קוד עבודה'] || '')}${r['סטטוס'] === 'פתוח' ? ' <span class="pill doing">בחממה</span>' : ''}</td>
       <td class="num">${r['שעות'] === '' || r['שעות'] == null ? '' : VG.hoursText(r['שעות'])}</td>
       <td class="num">${r['כמות'] === '' || r['כמות'] == null ? '' : esc(r['כמות']) + ' ' + esc(r['יחידה'] || '')}</td>
-      <td>${VG.photoLinks(r['תמונה']).map((p, i) => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${i + 1}</a>`).join(' ')}</td></tr>`).join('')
-      || '<tr><td colspan="7" class="empty">אין רשומות</td></tr>';
+      <td>${VG.photoLinks(r['תמונה']).map((p, i) => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${i + 1}</a>`).join(' ')}</td>
+      <td>${r['מזהה'] ? `<button type="button" class="btn plain" data-edit="${esc(r['מזהה'])}">עריכה</button>` : ''}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="empty">אין רשומות</td></tr>';
   }
   $('fGh').onchange = renderLog;
   $('fWorker').onchange = renderLog;
