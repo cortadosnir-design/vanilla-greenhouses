@@ -1,12 +1,13 @@
 /**
  * מעקב חממות וניל: השרת (Cloudflare Worker). קורא וכותב בקובץ Google Sheets של המשק, בלשוניות הקיימות בלבד.
- * האתר שולח POST עם JSON: { action, code, ...payload } ומקבל { ok, role, data } או { ok:false, error }.
+ * האתר שולח POST עם JSON: { action, session, ...payload } ומקבל { ok, role, name, data } או { ok:false, error }.
+ * הכניסה היא עם חשבון Google: login מאמת את החשבון מול רשימת המשתמשים (ב-KV, נערכת במסך ההרשאות) ומחזיר session.
  * השרת פונה לגוגל בשם חשבון החווה (חיבור חד-פעמי ב-/connect), כך שהתמונות נשמרות בתיקייה של הבעלים ב-Drive.
  *
  * Settings (Cloudflare dashboard, Worker > Settings):
  *   vars:    SHEET_ID, ALLOWED_EMAIL, GOOGLE_CLIENT_ID
  *   secrets: GOOGLE_CLIENT_SECRET, WORKER_CODE, MANAGER_CODE (8+ letters and digits)
- *   KV:      STORE (holds the Google refresh token)
+ *   KV:      STORE (the Google refresh token, the users list under "users", sessions under "session:<id>")
  *   cron:    0 0 * * *  (nightly backup, 02:00 in Israel in winter)
  */
 
@@ -43,7 +44,10 @@ const SETTING = {
   keepDays: 'ימים לשמירת גיבויים',
 };
 // photo is checked inside: the worker may add photos to his own greenhouse visit, the manager to any row
-const MANAGER_ONLY = ['dashboard', 'resolveIssue', 'report', 'photoSet', 'taskAdd', 'backup'];
+const MANAGER_ONLY = ['dashboard', 'resolveIssue', 'report', 'photoSet', 'taskAdd', 'backup', 'users', 'userSet', 'userDel'];
+// actions that answer from KV alone, without reading the sheet
+const USER_ACTIONS = { users: listUsers, userSet: setUser, userDel: delUser, logout };
+const SESSION_DAYS = 180;
 // Columns that hold a date or time, with the format the sheet shows them in. In the code they are milliseconds.
 const DATE_COLS = {
   'תאריך': 'dd/mm/yyyy', 'כניסה': 'hh:mm', 'יציאה': 'hh:mm', 'עודכן': 'dd/mm/yyyy hh:mm',
@@ -76,13 +80,25 @@ async function api(request, env) {
   try {
     if (Number(request.headers.get('content-length')) > 6e6) return { ok: false, error: 'הבקשה גדולה מדי' };
     const req = JSON.parse(await request.text());
-    const role = await roleFor(req.code, env);
-    if (!role) return { ok: false, error: 'קוד שגוי' };
+    if (req.action === 'login') return await login(req, env);
+    let role, user = null;
+    if (req.session != null) {
+      user = await sessionUser(req.session, env);
+      if (!user) return { ok: false, error: 'אין הרשאה. צריך להיכנס שוב', signin: true };
+      role = user.role;
+      // the name on every row comes from the signed-in account, not from the phone
+      req.worker = req.by = user.name;
+    } else {
+      role = await roleFor(req.code, env);
+      if (!role) return { ok: false, error: 'קוד שגוי' };
+    }
     if (req.id != null && !/^[A-Z]-[a-z0-9]{1,24}$/.test(String(req.id))) return { ok: false, error: 'מזהה לא תקין' };
-    if (MANAGER_ONLY.includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
+    if (MANAGER_ONLY.includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרשת הרשאת מנהל' };
+    const name = user ? user.name : undefined;
+    if (Object.hasOwn(USER_ACTIONS, String(req.action))) return { ok: true, role, name, data: await USER_ACTIONS[req.action](env, req, user) };
     const fn = Object.hasOwn(ACTIONS, String(req.action)) ? ACTIONS[req.action] : null; // never inherited keys like "constructor"
     if (!fn) return { ok: false, error: 'פעולה לא מוכרת: ' + req.action };
-    return { ok: true, role, data: await fn(await load(env, ACTION_TABS[req.action]), req, role) };
+    return { ok: true, role, name, data: await fn(await load(env, ACTION_TABS[req.action]), req, role) };
   } catch (err) {
     // retry: the phone keeps the report in its queue and sends it again later, instead of dropping it
     if (err && err.google) console.error(err.google);
@@ -106,6 +122,87 @@ async function roleFor(code, env) {
     if (secret && String(secret).trim().length >= 8 && h === (await sha(String(secret).trim()))) return role;
   }
   return null;
+}
+
+// ---------- users: Google sign-in, checked against the list the manager keeps ----------
+
+const lower = (e) => String(e == null ? '' : e).trim().toLowerCase();
+const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/;
+
+// the owner (ALLOWED_EMAIL) is always a manager, so the farm can never be locked out of its own app
+async function userMap(env) {
+  let map = {};
+  try { map = JSON.parse((await env.STORE.get('users')) || '{}') || {}; } catch (e) { map = {}; }
+  const owner = lower(env.ALLOWED_EMAIL);
+  if (owner) map[owner] = { name: (map[owner] && map[owner].name) || 'מנהל', role: 'manager', owner: true };
+  return map;
+}
+
+async function login(req, env) {
+  const cred = String(req.credential || '');
+  if (!/^[\w-]+\.[\w-]+\.[\w-]+$/.test(cred)) return { ok: false, error: 'הכניסה עם Google נכשלה' };
+  let info;
+  try {
+    // Google checks the signature and the expiry; we check it was issued to this app and to whom
+    info = await (await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(cred))).json();
+  } catch (e) { return { ok: false, error: 'אין חיבור לגוגל', retry: true }; }
+  const iss = String(info.iss || '').replace('https://', '');
+  if (info.aud !== env.GOOGLE_CLIENT_ID || iss !== 'accounts.google.com' || String(info.email_verified) !== 'true' || !(Number(info.exp) * 1000 > Date.now())) {
+    return { ok: false, error: 'הכניסה עם Google נכשלה' };
+  }
+  const email = lower(info.email);
+  const u = (await userMap(env))[email];
+  if (!u) return { ok: false, error: 'לחשבון ' + email + ' אין הרשאה. צריך לבקש מהמנהל להוסיף אותו', email };
+  const session = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+  await env.STORE.put('session:' + session, email, { expirationTtl: SESSION_DAYS * 86400 });
+  return { ok: true, role: u.role, name: u.name, data: { session, email, name: u.name, role: u.role } };
+}
+
+// the role is read on every request, so a removed or changed user takes effect at once
+async function sessionUser(session, env) {
+  const s = String(session);
+  if (!/^[a-f0-9]{64}$/.test(s)) return null;
+  const email = await env.STORE.get('session:' + s);
+  const u = email && (await userMap(env))[email];
+  return u ? { email, name: u.name, role: u.role } : null;
+}
+
+async function listUsers(env) {
+  const map = await userMap(env);
+  return Object.keys(map).sort().map((email) => ({ email, name: map[email].name, role: map[email].role, owner: !!map[email].owner }));
+}
+
+async function saveUsers(env, map) {
+  const out = {};
+  for (const [e, u] of Object.entries(map)) out[e] = { name: u.name, role: u.role };
+  await env.STORE.put('users', JSON.stringify(out));
+}
+
+async function setUser(env, req) {
+  const email = lower(req.email);
+  if (!EMAIL.test(email)) throw new Error('כתובת מייל לא תקינה');
+  const name = text(req.name).slice(0, 40);
+  if (!name) throw new Error('חסר שם');
+  if (req.role !== 'worker' && req.role !== 'manager') throw new Error('תפקיד לא תקין');
+  const map = await userMap(env);
+  // the owner stays a manager whatever is sent; only the name can change
+  map[email] = { name, role: map[email] && map[email].owner ? 'manager' : req.role };
+  await saveUsers(env, map);
+  return listUsers(env);
+}
+
+async function delUser(env, req) {
+  const email = lower(req.email);
+  const map = await userMap(env);
+  if (map[email] && map[email].owner) throw new Error('אי אפשר להסיר את בעל החשבון');
+  delete map[email];
+  await saveUsers(env, map);
+  return listUsers(env);
+}
+
+async function logout(env, req) {
+  if (/^[a-f0-9]{64}$/.test(String(req.session))) await env.STORE.delete('session:' + req.session);
+  return {};
 }
 
 // ---------- Google: one-time connect, then a refresh token in KV ----------
@@ -575,7 +672,7 @@ const ACTIONS = {
     const set = findBy(t, 'מזהה', req.id);
     if (!set) throw new Error('לא נמצאה רשומה (' + req.id + ')');
     const visit = !isSpecial(set);
-    if (role !== 'manager' && !visit) throw new Error('נדרש קוד מנהל');
+    if (role !== 'manager' && !visit) throw new Error('נדרשת הרשאת מנהל');
     const p = plain(set);
     const at = visit && typeof p['כניסה'] === 'number' ? p['כניסה'] : typeof p['תאריך'] === 'number' ? p['תאריך'] : Date.now();
     // file name in Drive: greenhouse, upload date and time, number in the set
