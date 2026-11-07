@@ -65,7 +65,7 @@
     await new Promise((ok) => setTimeout(ok, 250));
     const role = CODES[req.code];
     if (!role) return { ok: false, error: 'קוד שגוי' };
-    if (['dashboard', 'resolveIssue', 'report', 'photoSet', 'photo', 'taskAdd'].includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
+    if (['dashboard', 'resolveIssue', 'report', 'photoSet', 'photo', 'taskAdd', 'backup'].includes(req.action) && role !== 'manager') return { ok: false, error: 'נדרש קוד מנהל' };
     switch (req.action) {
       case 'bootstrap': return { ok: true, role, data: Object.assign({ tasks: tasks.filter((t) => t['סטטוס'] !== 'בוצע') }, base) };
       case 'checkIn': {
@@ -91,12 +91,13 @@
       }
       case 'taskAdd': tasks.push({ 'מזהה': req.id, 'תאריך ביצוע': req.due, 'חממה': (greenhouses.find((g) => g.id === req.gh) || { name: req.gh }).name, 'משימה': req.text, 'קוד עבודה': req.work, 'עובד': req.worker, 'סטטוס': 'פתוח' }); return { ok: true, role, data: { id: req.id } };
       case 'taskDone': { const r = tasks.find((x) => x['מזהה'] === req.id); if (!r) return { ok: false, error: 'המשימה לא נמצאה' }; r['סטטוס'] = 'בוצע'; return { ok: true, role, data: { id: req.id } }; }
+      case 'backup': return { ok: true, role, data: { at: Date.now(), url: 'https://docs.google.com/spreadsheets/d/backup', kept: 1, removed: 0 } };
       case 'shiftIn': attendance.push({ 'מזהה': req.id, 'תאריך': req.ts, 'עובד': req.worker, 'כניסה': req.ts, 'יציאה': '', 'שעות': '', 'סטטוס': 'פתוח' }); return { ok: true, role, data: { id: req.id } };
       case 'shiftOut': { const r = attendance.find((x) => x['מזהה'] === req.id); if (!r) return { ok: false, error: 'לא נמצאה כניסה לעבודה' }; Object.assign(r, { 'יציאה': req.ts, 'שעות': Math.round((req.ts - r['כניסה']) / 36000) / 100, 'סטטוס': 'סגור' }); return { ok: true, role, data: { id: req.id } }; }
       case 'issue':
         issues.push({ 'מזהה': req.id, 'תאריך': req.ts, 'חממה': (greenhouses.find((g) => g.id === req.gh) || { name: req.gh }).name, 'מדווח': req.worker, 'קטגוריה': req.category, 'חומרה': req.severity, 'תיאור': req.desc, 'תמונה': '', 'סטטוס': 'פתוח', 'פתרון': '' });
         return { ok: true, role, data: { id: req.id } };
-      case 'dashboard': return { ok: true, role, data: Object.assign({ log, issues, attendance, photos, tasks }, base) };
+      case 'dashboard': return { ok: true, role, data: Object.assign({ log, issues, attendance, photos, tasks, system: { lastBackup: Date.now() - 14 * 3600000, driveUsed: 3.4e9, driveLimit: 16106127360, secondOwner: true } }, base) };
       case 'resolveIssue': {
         const r = issues.find((x) => x['מזהה'] === req.id);
         if (r) Object.assign(r, { 'סטטוס': req.status, 'פתרון': req.solution });

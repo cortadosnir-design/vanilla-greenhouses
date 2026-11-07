@@ -409,3 +409,5 @@ dialog[open] { animation: sheet-in 0.26s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .list li .btn { min-height: 36px; padding: 0 12px; }
 .sheet-body #tList li { padding: 10px 0; }
 .sheet-body .list button.btn { width: auto; min-height: 36px; font-size: 15px; padding: 0 12px; background: var(--fill); }
+.sys { margin: 10px 0 0; font-size: 15px; color: var(--text-2); }
+.sys .warn { color: var(--danger); font-weight: 600; }

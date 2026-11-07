@@ -544,6 +544,7 @@
     renderPresence(d, now);
     renderUpload(d);
     renderTasks();
+    renderSystem(d.system || {});
 
     $('dueList').innerHTML = due.slice(0, 12).map((x) =>
       `<li><div class="main">${esc(x.work)}<div class="sub">${esc(x.gh)} · ${x.since === null ? 'לא בוצע מעולם' : 'בוצע ' + VG.relDay(now - x.since * VG.DAY, now) + ', כל ' + x.interval + ' ימים'}</div></div>
@@ -581,6 +582,34 @@
       `<a href="${esc(p.url)}" target="_blank" rel="noopener"><img loading="lazy" src="${window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + p.id + '&sz=w400'}" alt="${esc((r['חממה'] || '') + ' ' + fmtDate(r['תאריך']))}"></a>`).join('')
       || '<p class="empty">אין תמונות בטווח הזה</p>';
   }
+
+  // ---------- backup status ----------
+  function renderSystem(s) {
+    const bits = [];
+    if (s.lastBackup) {
+      const h = (Date.now() - s.lastBackup) / 3600000;
+      const when = h < 1 ? 'לפני פחות משעה' : h < 24 ? 'לפני ' + Math.round(h) + ' שעות' : 'לפני ' + Math.round(h / 24) + ' ימים';
+      bits.push(h > 48 ? `<span class="warn">גיבוי אחרון ${when}</span>` : 'גיבוי אחרון ' + when);
+    } else bits.push('<span class="warn">עוד לא נעשה גיבוי</span>');
+    if (!s.secondOwner) bits.push('<span class="warn">אין בעלים שני</span>');
+    if (s.driveUsed != null && s.driveLimit) {
+      const pct = s.driveUsed / s.driveLimit;
+      const gb = (n) => (n / 1073741824).toLocaleString('he-IL', { maximumFractionDigits: 1 });
+      const txt = `Drive ${gb(s.driveUsed)} מתוך ${gb(s.driveLimit)} GB`;
+      bits.push(pct > 0.8 ? `<span class="warn">${txt}</span>` : txt);
+    }
+    $('sysLine').innerHTML = bits.join(' · ');
+  }
+  $('backupBtn').onclick = async () => {
+    $('backupBtn').disabled = true;
+    toast('מגבה…');
+    try {
+      const j = await api('backup', {});
+      state.dash.system = Object.assign({}, state.dash.system, { lastBackup: j.data.at });
+      renderSystem(state.dash.system);
+      toast(`הגיבוי נשמר · <a href="${esc(j.data.url)}" target="_blank" rel="noopener">פתיחה</a>`);
+    } catch (e) { toast(e instanceof NetError ? 'אין חיבור לשרת' : esc(e.message)); } finally { $('backupBtn').disabled = false; }
+  };
 
   // ---------- future tasks ----------
   const isoDay = (t) => new Date(t - new Date(t).getTimezoneOffset() * 60000).toISOString().slice(0, 10);
