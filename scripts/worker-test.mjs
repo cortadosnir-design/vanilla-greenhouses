@@ -15,7 +15,7 @@ const LOG_HEAD = ['תאריך', 'עובד / מדווח', 'מספר חממה', '�
 const OLD_PHOTO = 'https://drive.google.com/file/d/1lngmWYujOqXTPMvCekcK81G7BoUBUhM8/view?usp=drivesdk';
 const tabs = {
   'Code': [[], ['Deployment ID', 'AKfy'], ['URL', 'https://script.google.com/x/exec'], [], ['כתובת האתר', 'https://site/'], ['קוד עובדים', '•••'], ['קוד מנהל', '•••'],
-    ['עובדים'], ['מזהה תיקיית תמונות ב-Drive', 'PHOTOS'], ['אימייל לעדכון יומי'], ['מזהה תיקיית גיבוי ב-Drive', 'BACKUPS'], ['אימייל בעלים שני', 'gershon566@gmail.com'],
+    ['עובדים'], ['מזהה תיקיית תמונות ב-Drive', 'PHOTOS-folder-1234'], ['אימייל לעדכון יומי'], ['מזהה תיקיית גיבוי ב-Drive', 'BACKUPS-folder-1234'], ['אימייל בעלים שני', 'owner2@example.com'],
     ['גיבוי אחרון', serialOf(2026, 11, 7, 2, 0)], ['ימים לשמירת גיבויים', 30]],
   'Master Data': [['סעיף / מאפיין', 'חממה 1', 'חממה 2', 'חממה 3'], ['שטח החממה (מ"ר)', 50, 50, 50]],
   'Work': [
@@ -32,8 +32,8 @@ const before = JSON.stringify(tabs);
 const sheetIds = Object.fromEntries(Object.keys(tabs).map((n, i) => [n, 100 + i]));
 const byId = Object.fromEntries(Object.entries(sheetIds).map(([n, id]) => [id, n]));
 const formulas = {}, formats = {};
-const files = [{ id: 'B-OLD', name: 'גיבוי חממות וניל 2026-09-01 02:00', parents: ['BACKUPS'], createdTime: '2026-09-01T00:00:00Z' },
-  { id: 'MINE', name: 'מסמך של הבעלים', parents: ['BACKUPS'], createdTime: '2020-01-01T00:00:00Z' }];
+const files = [{ id: 'B-OLD', name: 'גיבוי חממות וניל 2026-09-01 02:00', parents: ['BACKUPS-folder-1234'], createdTime: '2026-09-01T00:00:00Z' },
+  { id: 'MINE', name: 'מסמך של הבעלים', parents: ['BACKUPS-folder-1234'], createdTime: '2020-01-01T00:00:00Z' }];
 const perms = [], created = [], patches = [];
 let tokenCalls = 0;
 
@@ -79,6 +79,7 @@ globalThis.fetch = async (input, opt = {}) => {
     if (method === 'GET') return ok({ sheets: Object.keys(tabs).map((t) => ({ properties: { title: t, sheetId: sheetIds[t] } })) });
     if (path.endsWith(':append')) {
       assert.strictEqual(url.searchParams.get('valueInputOption'), 'RAW', 'values are never parsed as formulas');
+      assert.notStrictEqual(url.searchParams.get('insertDataOption'), 'OVERWRITE', 'new rows never overwrite cells');
       const t = titleOf(path.split('/values/')[1]);
       const rows = tabs[t];
       let last = rows.length; while (last > 0 && !(rows[last - 1] || []).some((c) => c !== '' && c != null)) last--;
@@ -176,6 +177,11 @@ assert.strictEqual((await call({ action: 'bootstrap', code: W })).role, 'worker'
 assert.strictEqual((await call({ action: 'bootstrap', code: M })).role, 'manager');
 assert.strictEqual((await call({ action: 'dashboard', code: W })).error, 'נדרש קוד מנהל');
 assert.strictEqual((await call({ action: 'checkIn', code: W, id: '=cmd' })).error, 'מזהה לא תקין');
+for (const action of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+  const x = await call({ action, code: W });
+  assert.strictEqual(x.ok, false, action + ' is not an action');
+  assert.ok(!JSON.stringify(x).includes(env.MANAGER_CODE) && !JSON.stringify(x).includes('sec'), 'secrets never leak (' + action + ')');
+}
 for (let i = 0; i < 50; i++) await call({ action: 'bootstrap', code: 'bad' + i });
 assert.strictEqual((await call({ action: 'bootstrap', code: W })).role, 'worker', 'no lockout after a flood');
 const shortEnv = { ...env, WORKER_CODE: '1234' };
@@ -266,7 +272,7 @@ assert.strictEqual(row[logCol('מספר חממה')], 'חממה 3');
 assert.strictEqual(row[logCol('חומרים / תמונות')].split('\n').length, 3);
 const photos = files.filter((f) => f.mimeType === 'image/jpeg');
 assert.strictEqual(photos.length, 3);
-assert.deepStrictEqual(photos[0].parents, ['PHOTOS'], 'into the folder from the Code tab');
+assert.deepStrictEqual(photos[0].parents, ['PHOTOS-folder-1234'], 'into the folder from the Code tab');
 assert.match(photos[2].name, /^חממה 3 \d{4}-\d\d-\d\d \d\d-\d\d \(3\)\.jpg$/, 'named by greenhouse, upload time and number');
 assert.ok(perms.some((p) => p.file === photos[0].id && p.type === 'anyone' && p.role === 'reader'), 'thumbnail can be shown');
 assert.match((await call({ action: 'photo', code: M, id: 'P-404', idx: 0, photo: jpg })).error, /לא נמצאה/);
@@ -286,6 +292,9 @@ assert.strictEqual((await call({ action: 'bootstrap', code: W })).data.tasks[0][
 assert.ok((await call({ action: 'taskDone', code: W, id: 'T-1', by: 'גרשון' })).ok);
 assert.strictEqual(cal[1][6], 'בוצע');
 assert.strictEqual((await call({ action: 'bootstrap', code: W })).data.tasks.length, 0);
+const doneAt = cal[1][8];
+assert.strictEqual((await call({ action: 'taskDone', code: W, id: 'T-1', by: 'אחר' })).data.duplicate, true);
+assert.deepStrictEqual([cal[1][8], cal[1][9]], [doneAt, 'גרשון'], 'a done task keeps who and when');
 
 // ---- dashboard: work rows, work days, problems; the old form's row reads right ----
 const d = await call({ action: 'dashboard', code: M });
@@ -306,12 +315,12 @@ assert.strictEqual(d.data.system.secondOwner, true);
 const b = await call({ action: 'backup', code: M });
 assert.ok(b.ok, b.error);
 const copy = files.find((f) => f.source === 'SHEET');
-assert.deepStrictEqual(copy.parents, ['BACKUPS']);
+assert.deepStrictEqual(copy.parents, ['BACKUPS-folder-1234']);
 assert.match(copy.name, /^גיבוי חממות וניל \d{4}-\d\d-\d\d \d\d:\d\d$/);
 assert.strictEqual(files.find((f) => f.id === 'B-OLD').trashed, true, 'old backup to the trash');
 assert.ok(!files.find((f) => f.id === 'MINE').trashed, "the owner's own files are never touched");
 assert.deepStrictEqual([b.data.kept, b.data.removed], [1, 1]);
-assert.ok(perms.some((p) => p.file === 'SHEET' && p.emailAddress === 'gershon566@gmail.com' && p.role === 'writer'));
+assert.ok(perms.some((p) => p.file === 'SHEET' && p.emailAddress === 'owner2@example.com' && p.role === 'writer'));
 assert.ok(Math.abs((tabs['Code'][12][1] - 25569) * DAY - Date.now() - israelOffset()) < 120000, 'last backup time written');
 assert.strictEqual(formats['Code!12,1'], 'dd/mm/yyyy hh:mm');
 // the nightly cron runs the same backup
@@ -330,7 +339,7 @@ const sumRows = created[0].sheets[0].data[0].rowData;
 assert.strictEqual(sumRows[1].values[0].userEnteredValue.stringValue, 'חממה 1');
 assert.strictEqual(sumRows[1].values[1].userEnteredValue.numberValue, 2.5, 'hours from the hours column');
 assert.ok(patches.some((p) => p.id === 'REPORT' && /addParents=FARM-FOLDER/.test(p.query)), 'moved next to the main file');
-assert.ok(perms.some((p) => p.file === 'REPORT' && p.emailAddress === 'gershon566@gmail.com' && p.role === 'reader'));
+assert.ok(perms.some((p) => p.file === 'REPORT' && p.emailAddress === 'owner2@example.com' && p.role === 'reader'));
 assert.ok(!perms.some((p) => p.file === 'REPORT' && p.type === 'anyone'), 'never public by link');
 
 // ---- Google trouble is reported as retryable, so the phone keeps the report ----
