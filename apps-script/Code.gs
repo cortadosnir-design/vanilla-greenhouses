@@ -4,22 +4,53 @@
  * עמודות נקראות לפי שם הכותרת, כך שאפשר לשנות סדר עמודות בגיליון בלי לשבור את הקוד.
  */
 
-const SHEETS = {
-  greenhouses: 'חממות',
-  works: 'עבודות',
-  workers: 'עובדים',
-  log: 'יומן עבודה',
-  attendance: 'נוכחות',
-  photos: 'תמונות',
-  tasks: 'משימות',
-  issues: 'בעיות',
-  settings: 'הגדרות',
+// Only the farm's existing tabs are used (nothing is created or deleted):
+//   Master Data = greenhouses (one per column) · Work = the work catalogue · Log data = every daily action
+//   (work in a greenhouse, start/end of the work day, problem reports, photos) · Calendar = planned works
+//   Code = settings (key in column A, value in column B) · Barcode = QR links per greenhouse
+const SHEETS = { greenhouses: 'greenhouses', works: 'works', log: 'log', tasks: 'tasks', settings: 'settings', barcode: 'barcode' };
+const SHEET_NAMES = {
+  greenhouses: ['Master Data'], works: ['Work'], log: ['Log data'], tasks: ['Calendar'], settings: ['Code'], barcode: ['Barcode'],
 };
+// The farm's own column titles, mapped to the names the code uses. Columns not listed keep their own title.
+const ALIASES = {
+  works: {
+    'קוד עבודה': 'קוד', 'קטגוריית עבודה': 'קטגוריה', 'שם העבודה / טיפול אגרוטכני': 'שם העבודה',
+    'תיאור מפורט והנחיות ביצוע': 'תיאור והנחיות ביצוע', 'עונה / שלב פנולוגי מומלץ': 'עונה / שלב פנולוגי', 'תדירות / מחזוריות': 'תדירות',
+  },
+  log: {
+    'עובד / מדווח': 'עובד', 'מספר חממה': 'חממה', 'זמן הגעה (כניסה)': 'כניסה', 'זמן יציאה': 'יציאה', 'סה"כ שעות עבודה': 'שעות',
+    'קטגוריית טיפול': 'עבודה', 'פירוט עבודה ומיקום': 'פירוט', 'כמות / תפוקה': 'כמות', 'חומרים / תמונות': 'תמונה', 'הערות / בעיות שנצפו': 'הערות',
+  },
+};
+// Columns the app needs on top of the farm's own (added after the last titled column; existing data untouched).
+const EXTRA_COLUMNS = {
+  works: ['כל כמה ימים', 'יחידת כמות', 'מיקום', 'מעקב תדירות'],
+  log: ['סטטוס', 'מזהה', 'קוד עבודה', 'יחידה', 'חומרה', 'פתרון'],
+};
+const CALENDAR_HEAD = ['מזהה', 'תאריך ביצוע', 'חממה', 'משימה', 'קוד עבודה', 'עובד', 'סטטוס', 'נוצר', 'בוצע', 'בוצע ע"י'];
+// "קוד עבודה" values of Log data rows that are not greenhouse work.
+const KIND = { shift: 'SHIFT', issue: 'ISSUE', photo: 'PHOTO' };
+// Defaults written once into the new Work columns: [every N days, quantity unit, location, show in "due"].
+const WORK_DEFAULTS = {
+  W01: [1, 'פרחים', 'חממה', 'לא'], W02: ['', 'אשכולות', 'חממה', 'לא'], W03: [7, '', 'חממה', 'כן'], W04: [90, '', 'חממה', 'לא'],
+  W05: [180, 'ק"ג', 'חממה', 'כן'], W06: [14, 'ליטר', 'חממה', 'כן'], W07: [7, '', 'חממה', 'כן'], W08: [7, '', 'חממה', 'כן'],
+  W09: [7, '', 'חממה', 'כן'], W10: ['', 'ליטר', 'חממה', 'לא'], W11: [2, 'תרמילים', 'חממה', 'לא'], W12: [1, 'ק"ג', 'מחסן', 'לא'],
+  W13: ['', 'ק"ג', 'מחסן', 'לא'], W14: [1, '', 'מחסן', 'לא'], W15: [1, '', 'מחסן', 'לא'], W16: [90, '', 'חממה', 'כן'],
+};
+const SITE_URL = 'https://cortadosnir-design.github.io/vanilla-greenhouses/';
+const SETTING_DEFAULTS = [
+  ['כתובת האתר', SITE_URL], ['קוד עובדים', '1234'], ['קוד מנהל', '9876'], ['עובדים', ''],
+  ['מזהה תיקיית תמונות ב-Drive', ''], ['אימייל לעדכון יומי', ''],
+  ['מזהה תיקיית גיבוי ב-Drive', ''], ['אימייל בעלים שני', ''], ['גיבוי אחרון', ''], ['ימים לשמירת גיבויים', 30],
+];
+const SCHEMA_VERSION = '3';
 const SETTING = {
   workerCode: 'קוד עובדים',
   managerCode: 'קוד מנהל',
   photoFolder: 'מזהה תיקיית תמונות ב-Drive',
   digestEmail: 'אימייל לעדכון יומי',
+  workers: 'עובדים',
   backupFolder: 'מזהה תיקיית גיבוי ב-Drive',
   secondOwner: 'אימייל בעלים שני',
   lastBackup: 'גיבוי אחרון',
@@ -27,10 +58,55 @@ const SETTING = {
 };
 const MANAGER_ONLY = ['dashboard', 'resolveIssue', 'report', 'photoSet', 'photo', 'taskAdd', 'backup'];
 
-/** להריץ פעם אחת מהעורך כדי לאשר הרשאות גיליון ו-Drive (זה מה שחסר בגרסה הקודמת). */
+/** להריץ פעם אחת מהעורך: מאשר הרשאות גיליון ו-Drive ומוסיף לגיליון את הלשוניות והעמודות שהאפליקציה צריכה. */
 function authorize() {
   SpreadsheetApp.getActive().getName();
   DriveApp.getRootFolder().getName();
+  setup();
+}
+
+/** Adds what the app needs to the farm's file: columns, settings rows, Calendar titles, QR links. Never deletes. Safe to run again. */
+function setup() {
+  Object.keys(EXTRA_COLUMNS).forEach(function (key) {
+    const sh = findSheet(key);
+    if (!sh) return;
+    const t = readTable(key);
+    let last = t.head.length;
+    while (last > 0 && !t.head[last - 1]) last--; // a blank title at the end (the old status column) is reused
+    EXTRA_COLUMNS[key].forEach(function (name) {
+      if (t.head.indexOf(name) >= 0) return;
+      last++;
+      sh.getRange(1, last, 1, 1).setValue(name);
+      styleHeader(sh.getRange(1, last, 1, 1));
+    });
+  });
+
+  const works = readTable(SHEETS.works);
+  works.rows.forEach(function (r) {
+    const d = WORK_DEFAULTS[String(r['קוד'])];
+    if (!d) return;
+    ['כל כמה ימים', 'יחידת כמות', 'מיקום', 'מעקב תדירות'].forEach(function (k, i) {
+      if (r[k] === '' || r[k] == null) works.sh.getRange(r._row, col(works, k)).setValue(d[i]);
+    });
+  });
+
+  const cal = findSheet(SHEETS.tasks);
+  if (cal && !String(cal.getRange(1, 1, 1, 1).getValue()).trim()) {
+    cal.getRange(1, 1, 1, CALENDAR_HEAD.length).setValues([CALENDAR_HEAD]);
+    styleHeader(cal.getRange(1, 1, 1, CALENDAR_HEAD.length));
+  }
+
+  const have = settings();
+  SETTING_DEFAULTS.forEach(function (d) { if (!(d[0] in have)) findSheet(SHEETS.settings).appendRow(d); });
+
+  const bc = findSheet(SHEETS.barcode);
+  if (bc && bc.getLastRow() <= 1 && !String(bc.getRange(1, 1, 1, 1).getValue()).trim()) {
+    const rows = [['חממה', 'קישור לדיווח (להפוך ל-QR ולהדביק על הדלת)']].concat(greenhouseList().map(function (g) { return [g.name, SITE_URL + '?gh=' + g.id]; }));
+    bc.getRange(1, 1, rows.length, 2).setValues(rows);
+    styleHeader(bc.getRange(1, 1, 1, 2));
+  }
+
+  PropertiesService.getScriptProperties().setProperty('schema', SCHEMA_VERSION);
 }
 
 function doGet() {
@@ -40,6 +116,7 @@ function doGet() {
 function doPost(e) {
   try {
     const req = JSON.parse(e.postData.contents);
+    if (PropertiesService.getScriptProperties().getProperty('schema') !== SCHEMA_VERSION) setup();
     const role = roleFor(req.code);
     if (!role) return json({ ok: false, error: 'קוד שגוי' });
     if (MANAGER_ONLY.indexOf(req.action) >= 0 && role !== 'manager') return json({ ok: false, error: 'נדרש קוד מנהל' });
@@ -54,9 +131,9 @@ function doPost(e) {
 const ACTIONS = {
   bootstrap: function () {
     return {
-      greenhouses: readTable(SHEETS.greenhouses).rows.filter(isActive).map(ghOut),
+      greenhouses: greenhouseList(),
       works: readTable(SHEETS.works).rows.map(workOut),
-      workers: readTable(SHEETS.workers).rows.filter(isActive).map(function (r) { return String(r['שם']); }),
+      workers: workerList(),
       tasks: readTable(SHEETS.tasks).rows.filter(function (r) { return r['סטטוס'] !== 'בוצע'; }).map(plain),
     };
   },
@@ -131,18 +208,18 @@ const ACTIONS = {
 
   shiftIn: function (req) {
     return withLock(function () {
-      const t = readTable(SHEETS.attendance);
+      const t = readTable(SHEETS.log);
       if (findBy(t, 'מזהה', req.id)) return { id: req.id, duplicate: true };
       const start = new Date(req.ts);
-      const row = appendObj(t, { 'מזהה': req.id, 'תאריך': dayOf(start), 'עובד': text(req.worker), 'כניסה': start, 'סטטוס': 'פתוח' });
-      formatTimeRow(t, row);
+      const row = appendObj(t, { 'מזהה': req.id, 'תאריך': dayOf(start), 'עובד': text(req.worker), 'עבודה': 'יום עבודה', 'קוד עבודה': KIND.shift, 'כניסה': start, 'סטטוס': 'פתוח' });
+      formatLogRow(t, row);
       return { id: req.id };
     });
   },
 
   shiftOut: function (req) {
     return withLock(function () {
-      const t = readTable(SHEETS.attendance);
+      const t = readTable(SHEETS.log);
       const hit = findBy(t, 'מזהה', req.id);
       if (!hit) throw new Error('לא נמצאה כניסה לעבודה (' + req.id + ')');
       if (hit['סטטוס'] === 'סגור') return { id: req.id, duplicate: true };
@@ -154,10 +231,11 @@ const ACTIONS = {
   /** The manager opens a photo set for a greenhouse and date; the photos follow one per request. */
   photoSet: function (req) {
     return withLock(function () {
-      const t = readTable(SHEETS.photos);
+      const t = readTable(SHEETS.log);
       if (findBy(t, 'מזהה', req.id)) return { id: req.id, duplicate: true };
       const gh = greenhouse(req.gh);
-      const row = appendObj(t, { 'מזהה': req.id, 'תאריך': new Date(req.date), 'חממה': gh ? gh.name : text(req.gh), 'הערה': text(req.note), 'הועלה ע"י': text(req.by) });
+      const row = appendObj(t, { 'מזהה': req.id, 'תאריך': new Date(req.date), 'עובד': text(req.by), 'חממה': gh ? gh.name : text(req.gh),
+        'עבודה': 'תמונות', 'קוד עבודה': KIND.photo, 'הערות': text(req.note), 'סטטוס': 'סגור' });
       t.sh.getRange(row, col(t, 'תאריך')).setNumberFormat('dd/mm/yyyy');
       return { id: req.id };
     });
@@ -169,7 +247,7 @@ const ACTIONS = {
     if (!url) throw new Error('תמונה לא תקינה');
     return withLock(function () {
       const kind = String(req.id).charAt(0);
-      const t = readTable(kind === 'P' ? SHEETS.photos : kind === 'B' ? SHEETS.issues : SHEETS.log);
+      const t = readTable(SHEETS.log);
       const hit = findBy(t, 'מזהה', req.id);
       if (!hit) throw new Error('לא נמצאה רשומה (' + req.id + ')');
       const cur = String(hit['תמונה'] || '');
@@ -181,17 +259,19 @@ const ACTIONS = {
   issue: function (req) {
     const photo = savePhoto(req.photo, req.id);
     return withLock(function () {
-      const t = readTable(SHEETS.issues);
+      const t = readTable(SHEETS.log);
       if (findBy(t, 'מזהה', req.id)) return { id: req.id, duplicate: true };
       const gh = greenhouse(req.gh);
       const row = appendObj(t, {
         'מזהה': req.id,
         'תאריך': new Date(req.ts),
-        'חממה': gh ? gh.name : req.gh,
-        'מדווח': text(req.worker),
-        'קטגוריה': text(req.category),
+        'חממה': gh ? gh.name : text(req.gh),
+        'עובד': text(req.worker),
+        'עבודה': 'דיווח בעיה',
+        'קוד עבודה': KIND.issue,
+        'פירוט': text(req.category),
         'חומרה': text(req.severity),
-        'תיאור': text(req.desc),
+        'הערות': text(req.desc),
         'תמונה': photo,
         'סטטוס': 'פתוח',
       });
@@ -202,13 +282,12 @@ const ACTIONS = {
 
   dashboard: function () {
     return {
-      greenhouses: readTable(SHEETS.greenhouses).rows.filter(isActive).map(ghOut),
+      greenhouses: greenhouseList(),
       works: readTable(SHEETS.works).rows.map(workOut),
-      workers: readTable(SHEETS.workers).rows.filter(isActive).map(function (r) { return String(r['שם']); }),
-      log: readTable(SHEETS.log).rows.map(plain),
-      issues: readTable(SHEETS.issues).rows.map(plain),
-      attendance: readTable(SHEETS.attendance).rows.map(plain),
-      photos: readTable(SHEETS.photos).rows.map(plain),
+      workers: workerList(),
+      log: workRows(readTable(SHEETS.log).rows).map(plain),
+      issues: readTable(SHEETS.log).rows.filter(isKind(KIND.issue)).map(issueOut),
+      attendance: readTable(SHEETS.log).rows.filter(isKind(KIND.shift)).map(plain),
       tasks: readTable(SHEETS.tasks).rows.map(plain),
       system: systemStatus(),
     };
@@ -218,16 +297,12 @@ const ACTIONS = {
 
   resolveIssue: function (req) {
     return withLock(function () {
-      const t = readTable(SHEETS.issues);
+      const t = readTable(SHEETS.log);
       const hit = findBy(t, 'מזהה', req.id);
-      if (!hit) throw new Error('הבעיה לא נמצאה');
-      setCells(t, hit._row, {
-        'סטטוס': ['פתוח', 'בטיפול', 'טופל'].indexOf(req.status) >= 0 ? req.status : 'פתוח',
-        'תאריך טיפול': req.status === 'טופל' ? new Date() : '',
-        'טופל ע"י': text(req.by),
-        'פתרון': text(req.solution),
-      });
-      t.sh.getRange(hit._row, col(t, 'תאריך טיפול')).setNumberFormat('dd/mm/yyyy');
+      if (!hit || hit['קוד עבודה'] !== KIND.issue) throw new Error('הבעיה לא נמצאה');
+      const status = ['פתוח', 'בטיפול', 'טופל'].indexOf(req.status) >= 0 ? req.status : 'פתוח';
+      const by = text(req.by), solution = text(req.solution);
+      setCells(t, hit._row, { 'סטטוס': status, 'פתרון': solution ? solution + (by ? ' (' + by + ')' : '') : '' });
       return { id: req.id };
     });
   },
@@ -240,9 +315,10 @@ const ACTIONS = {
     const tz = Session.getScriptTimeZone();
     const fmt = function (d) { return Utilities.formatDate(d, tz, 'dd/MM/yyyy'); };
 
-    const ghs = readTable(SHEETS.greenhouses).rows.filter(isActive).map(ghOut);
-    const log = readTable(SHEETS.log).rows.filter(function (r) { return inRange(r['תאריך']); });
-    const issues = readTable(SHEETS.issues).rows.filter(function (r) { return inRange(r['תאריך']); });
+    const ghs = greenhouseList();
+    const all = readTable(SHEETS.log).rows.filter(function (r) { return inRange(r['תאריך']); });
+    const log = workRows(all);
+    const issues = all.filter(isKind(KIND.issue)).map(issueOut).map(function (r) { r['תאריך'] = new Date(r['תאריך']); return r; });
     const sum = function (rows, key) { return rows.reduce(function (a, r) { return a + (Number(r[key]) || 0); }, 0); };
 
     const title = 'דוח חממות וניל ' + fmt(from.getTime() ? from : firstDate(log)) + ' - ' + fmt(to);
@@ -276,13 +352,13 @@ const ACTIONS = {
     numberFormats(logSheet, logCols, log.length, { 'תאריך': 'dd/mm/yyyy', 'כניסה': 'hh:mm', 'יציאה': 'hh:mm', 'שעות': '0.00' });
 
     const attCols = ['תאריך', 'עובד', 'כניסה', 'יציאה', 'שעות'];
-    const att = readTable(SHEETS.attendance).rows.filter(function (r) { return inRange(r['תאריך']); });
+    const att = all.filter(isKind(KIND.shift));
     const attSheet = writeSheet(book.insertSheet('נוכחות'), attCols, att.map(function (r) { return attCols.map(function (c) { return r[c]; }); }));
     numberFormats(attSheet, attCols, att.length, { 'תאריך': 'dd/mm/yyyy', 'כניסה': 'hh:mm', 'יציאה': 'hh:mm', 'שעות': '0.00' });
 
-    const issueCols = ['תאריך', 'חממה', 'מדווח', 'קטגוריה', 'חומרה', 'תיאור', 'סטטוס', 'תאריך טיפול', 'טופל ע"י', 'פתרון', 'תמונה'];
+    const issueCols = ['תאריך', 'חממה', 'מדווח', 'קטגוריה', 'חומרה', 'תיאור', 'סטטוס', 'פתרון', 'תמונה'];
     const issueSheet = writeSheet(book.insertSheet('בעיות'), issueCols, issues.map(function (r) { return issueCols.map(function (c) { return r[c]; }); }));
-    numberFormats(issueSheet, issueCols, issues.length, { 'תאריך': 'dd/mm/yyyy', 'תאריך טיפול': 'dd/mm/yyyy' });
+    numberFormats(issueSheet, issueCols, issues.length, { 'תאריך': 'dd/mm/yyyy' });
 
     return { url: book.getUrl(), title: title };
   },
@@ -292,11 +368,18 @@ const ACTIONS = {
 
 function ss() { return SpreadsheetApp.getActive(); }
 
-function readTable(name) {
-  const sh = ss().getSheetByName(name);
-  if (!sh) throw new Error('חסרה לשונית: ' + name);
+function findSheet(key) {
+  const names = SHEET_NAMES[key] || [key];
+  for (let i = 0; i < names.length; i++) { const sh = ss().getSheetByName(names[i]); if (sh) return sh; }
+  return null;
+}
+
+function readTable(key) {
+  const sh = findSheet(key);
+  if (!sh) throw new Error('חסרה לשונית: ' + (SHEET_NAMES[key] || [key])[0]);
   const values = sh.getDataRange().getValues();
-  const head = values[0].map(String);
+  const alias = ALIASES[key] || {};
+  const head = values[0].map(function (h) { h = String(h).trim(); return alias[h] || h; });
   const rows = [];
   for (let i = 1; i < values.length; i++) {
     if (values[i].every(function (c) { return c === '' || c === null; })) continue;
@@ -306,6 +389,8 @@ function readTable(name) {
   }
   return { sh: sh, head: head, rows: rows };
 }
+
+function hasCol(t, name) { return t.head.indexOf(name) >= 0; }
 
 function col(t, name) {
   const i = t.head.indexOf(name);
@@ -319,7 +404,7 @@ function appendObj(t, obj) {
 }
 
 function setCells(t, row, obj) {
-  Object.keys(obj).forEach(function (k) { t.sh.getRange(row, col(t, k)).setValue(obj[k]); });
+  Object.keys(obj).forEach(function (k) { if (hasCol(t, k)) t.sh.getRange(row, col(t, k)).setValue(obj[k]); });
 }
 
 function findBy(t, key, value) {
@@ -332,19 +417,10 @@ function formatLogRow(t, row) {
   c('תאריך').setNumberFormat('dd/mm/yyyy');
   c('כניסה').setNumberFormat('hh:mm');
   c('יציאה').setNumberFormat('hh:mm');
-  c('עודכן').setNumberFormat('dd/mm/yyyy hh:mm');
+  if (hasCol(t, 'עודכן')) c('עודכן').setNumberFormat('dd/mm/yyyy hh:mm');
   const inA1 = c('כניסה').getA1Notation();
   const outA1 = c('יציאה').getA1Notation();
   // both cells hold full date-times, so a shift across midnight or a check-out the next day is still right
-  c('שעות').setFormula('=IF(OR(' + inA1 + '="",' + outA1 + '=""),"",ROUND((' + outA1 + '-' + inA1 + ')*24,2))').setNumberFormat('0.00');
-}
-
-function formatTimeRow(t, row) {
-  const c = function (n) { return t.sh.getRange(row, col(t, n)); };
-  c('תאריך').setNumberFormat('dd/mm/yyyy');
-  c('כניסה').setNumberFormat('hh:mm');
-  c('יציאה').setNumberFormat('hh:mm');
-  const inA1 = c('כניסה').getA1Notation(), outA1 = c('יציאה').getA1Notation();
   c('שעות').setFormula('=IF(OR(' + inA1 + '="",' + outA1 + '=""),"",ROUND((' + outA1 + '-' + inA1 + ')*24,2))').setNumberFormat('0.00');
 }
 
@@ -383,6 +459,17 @@ function isActive(r) { return String(r['פעילה'] || r['פעיל'] || 'כן')
 
 function ghOut(r) { return { id: String(r['מזהה']), name: String(r['שם']) }; }
 
+/** Master Data lists one greenhouse per column (row 1 holds the names); a table with one row per greenhouse also works. */
+function greenhouseList() {
+  const sh = findSheet(SHEETS.greenhouses);
+  if (!sh) throw new Error('חסרה לשונית Master Data');
+  const values = sh.getDataRange().getValues();
+  if (String(values[0][0]).trim() === 'סעיף / מאפיין') {
+    return values[0].slice(1).map(function (n, i) { return { id: 'GH' + (i + 1), name: String(n).trim() }; }).filter(function (g) { return g.name; });
+  }
+  return readTable(SHEETS.greenhouses).rows.filter(isActive).map(ghOut);
+}
+
 function workOut(r) {
   return {
     code: String(r['קוד']),
@@ -396,23 +483,59 @@ function workOut(r) {
 }
 
 function greenhouse(id) {
-  return readTable(SHEETS.greenhouses).rows.map(ghOut).filter(function (g) { return g.id === id || g.name === id; })[0] || null;
+  return greenhouseList().filter(function (g) { return g.id === id || g.name === id; })[0] || null;
+}
+
+function isKind(kind) { return function (r) { return r['קוד עבודה'] === kind; }; }
+
+/** Log data rows that are work (and photo sets), without work-day and problem rows. */
+function workRows(rows) { return rows.filter(function (r) { return r['קוד עבודה'] !== KIND.shift && r['קוד עבודה'] !== KIND.issue; }); }
+
+function issueOut(r) {
+  const o = plain(r);
+  return { 'מזהה': o['מזהה'], 'תאריך': o['תאריך'], 'חממה': o['חממה'], 'מדווח': o['עובד'], 'קטגוריה': o['פירוט'], 'חומרה': o['חומרה'],
+    'תיאור': o['הערות'], 'תמונה': o['תמונה'], 'סטטוס': o['סטטוס'] || 'פתוח', 'פתרון': o['פתרון'] };
+}
+
+/** Names from the "עובדים" row in Code (comma separated); until it is filled, the names already in Log data. */
+function workerList() {
+  const v = (settings()[SETTING.workers] || {}).value || '';
+  const listed = v.split(/[,،\n]/).map(function (x) { return x.trim(); }).filter(String);
+  if (listed.length) return listed;
+  const seen = {};
+  readTable(SHEETS.log).rows.forEach(function (r) { const n = String(r['עובד'] || '').trim(); if (n) seen[n] = true; });
+  return Object.keys(seen);
 }
 
 function workByCode(code) {
   return readTable(SHEETS.works).rows.map(workOut).filter(function (w) { return w.code === code; })[0] || null;
 }
 
+function isDate(v) { return Object.prototype.toString.call(v) === '[object Date]'; }
+
 function plain(r) {
   const o = {};
-  Object.keys(r).forEach(function (k) { if (k !== '_row') o[k] = r[k] instanceof Date ? r[k].getTime() : r[k]; });
+  Object.keys(r).forEach(function (k) {
+    if (k === '_row') return;
+    const v = r[k];
+    if (!isDate(v)) { o[k] = v; return; }
+    if (v.getFullYear() > 1900) { o[k] = v.getTime(); return; }
+    // a time or duration with no date (rows from the old form): hours as a number, times on the row's date
+    const mins = v.getHours() * 60 + v.getMinutes();
+    if (k === 'שעות') o[k] = Math.round(mins / 60 * 100) / 100;
+    else if (isDate(r['תאריך'])) { const d = new Date(r['תאריך'].getTime()); d.setHours(0, mins, 0, 0); o[k] = d.getTime(); }
+    else o[k] = '';
+  });
   return o;
 }
 
+/** Settings live in the Code tab: the key in column A, the value in column B, one per row. */
 function settings() {
-  const t = readTable(SHEETS.settings);
+  const sh = findSheet(SHEETS.settings);
+  if (!sh) throw new Error('חסרה לשונית Code');
+  const values = sh.getDataRange().getValues();
   const m = {};
-  t.rows.forEach(function (r) { m[String(r['הגדרה'])] = { value: String(r['ערך']).trim(), row: r._row }; });
+  values.forEach(function (r, i) { const k = String(r[0] || '').trim(); if (k) m[k] = { value: String(r[1] == null ? '' : r[1]).trim(), row: i + 1 }; });
   return m;
 }
 
@@ -454,13 +577,14 @@ function ensureFolder(key, name) {
   const entry = settings()[key];
   if (entry && entry.value) return DriveApp.getFolderById(entry.value);
   const folder = DriveApp.createFolder(name);
-  if (entry) ss().getSheetByName(SHEETS.settings).getRange(entry.row, 2).setValue(folder.getId());
+  setSetting(key, folder.getId());
   return folder;
 }
 
 function setSetting(key, value) {
   const entry = settings()[key];
-  if (entry) ss().getSheetByName(SHEETS.settings).getRange(entry.row, 2).setValue(value);
+  if (entry) findSheet(SHEETS.settings).getRange(entry.row, 2).setValue(value);
+  else findSheet(SHEETS.settings).appendRow([key, value]);
 }
 
 // ---------- backup: a dated copy of the whole spreadsheet every night, old copies trashed (still recoverable for 30 days) ----------
@@ -527,16 +651,6 @@ function weatherDigest() {
   const tz = Session.getScriptTimeZone();
   const today = Utilities.formatDate(new Date(), tz, 'dd/MM/yyyy');
 
-  // climate log row (one per day) so weather sits next to the work log for later analysis
-  const sh = ss().getSheetByName('מזג אוויר');
-  if (sh) {
-    const last = sh.getLastRow() > 1 ? sh.getRange(sh.getLastRow(), 1).getDisplayValue() : '';
-    if (last !== today) {
-      sh.appendRow([new Date(), w.temperature_2m_max[0], w.temperature_2m_min[0], w.relative_humidity_2m_max[0], w.relative_humidity_2m_min[0], w.precipitation_sum[0], w.wind_speed_10m_max[0]]);
-      sh.getRange(sh.getLastRow(), 1).setNumberFormat('dd/mm/yyyy');
-    }
-  }
-
   const lines = [];
   for (let i = 0; i < 3; i++) {
     const when = i === 0 ? 'היום' : i === 1 ? 'מחר' : 'מחרתיים';
@@ -551,7 +665,7 @@ function weatherDigest() {
     if (w.temperature_2m_min[i] <= 10) alerts.push(when + ' לילה קר (' + Math.round(w.temperature_2m_min[i]) + '°). לבדוק חימום.');
     if (w.wind_speed_10m_max[i] >= 45) alerts.push(when + ' רוח חזקה. לבדוק יריעות ורשתות.');
   }
-  const openIssues = readTable(SHEETS.issues).rows.filter(function (r) { return r['סטטוס'] !== 'טופל'; });
+  const openIssues = readTable(SHEETS.log).rows.filter(isKind(KIND.issue)).filter(function (r) { return r['סטטוס'] !== 'טופל'; });
 
   const email = (settings()[SETTING.digestEmail] || {}).value;
   if (!email) return;
