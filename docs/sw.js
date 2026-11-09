@@ -1,5 +1,5 @@
 // Caches the app shell so the site opens in the greenhouse without reception; API and weather calls are never cached.
-const CACHE = 'vg-v3';
+const CACHE = 'vg-v4';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'fit.js', 'logic.js', 'weather.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg'];
 const NETWORK_WAIT = 4000; // on a weak signal, fall back to the cached shell instead of hanging
 

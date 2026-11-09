@@ -48,6 +48,12 @@ async function noScroll(p, where) {
   assert.deepStrictEqual(bad, [], where + ' scrolls: ' + bad.join(', '));
 }
 
+// the real gate is Google only; the tests sign in with the mock server's codes through the demo's code form
+async function codeForm(p) {
+  assert.ok(await p.isHidden('#codeBox'), 'no code entry on the real gate');
+  await p.evaluate(() => { const b = document.getElementById('codeBox'); b.hidden = false; b.open = true; });
+}
+
 async function skipIntro(p) {
   await p.waitForSelector('#intro');
   if (!(await p.$('#intro.gone'))) await p.click('#intro').catch(() => {});
@@ -76,7 +82,7 @@ async function skipIntro(p) {
   await page.screenshot({ path: path.join(SHOTS, '00-intro.png') });
   await skipIntro(page);
   await page.waitForSelector('#gsiBtn');
-  await page.click('#codeBox summary');
+  await codeForm(page);
   await page.fill('#gateCode', '0000');
   await page.click('#gateForm button[type=submit]');
   await page.waitForSelector('#gateErr:has-text("קוד שגוי")');
@@ -460,7 +466,7 @@ async function skipIntro(p) {
   wp.on('pageerror', (e) => errors.push('wake pageerror: ' + e.message));
   await wp.goto(BASE);
   await skipIntro(wp);
-  await wp.click('#codeBox summary');
+  await codeForm(wp);
   await wp.fill('#gateCode', '9876');
   await wp.click('#gateForm button[type=submit]');
   await wp.waitForSelector('#whoDlg[open]');

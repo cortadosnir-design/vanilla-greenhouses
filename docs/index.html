@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=1794200000">
+  <link rel="stylesheet" href="styles.css?v=1794300000">
 </head>
 <body>
 
@@ -59,14 +59,14 @@
   <div class="intro-title">חממות וניל</div>
 </div>
 
-<!-- first run: sign in with Google; a farm code is the fallback (and the demo) -->
+<!-- sign in with Google only; the code form is for the demo (?demo) -->
 <div id="gate" class="gate" hidden>
   <div class="stack">
     <img class="mark" src="icons/icon.svg" alt="">
     <h1>חממות וניל</h1>
     <div id="gsi" class="gsi"></div>
     <p id="gateErr" class="error" role="alert"></p>
-    <details id="codeBox" class="code-box">
+    <details id="codeBox" class="code-box" hidden>
       <summary>כניסה עם קוד</summary>
       <form id="gateForm" class="stack" autocomplete="off">
         <div class="group">
@@ -381,14 +381,14 @@
 <div id="qrSheet" aria-hidden="true"></div>
 
 <script src="https://accounts.google.com/gsi/client" async onload="window.onGsi && onGsi()"></script>
-<script src="config.js?v=1794200000"></script>
+<script src="config.js?v=1794300000"></script>
 <script>
   // ?demo turns on a self-contained demo (no server); it is remembered until ?demo=off
   (function () { try { var q = location.search; if (/[?&]demo=off/.test(q)) localStorage.removeItem('vg.demo'); else if (/[?&]demo/.test(q)) localStorage.setItem('vg.demo', '1'); if (localStorage.getItem('vg.demo')) document.write('<script src="demo.js"><\/script>'); } catch (e) {} })();
 </script>
-<script src="fit.js?v=1794200000"></script>
-<script src="logic.js?v=1794200000"></script>
-<script src="weather.js?v=1794200000"></script>
-<script src="app.js?v=1794200000"></script>
+<script src="fit.js?v=1794300000"></script>
+<script src="logic.js?v=1794300000"></script>
+<script src="weather.js?v=1794300000"></script>
+<script src="app.js?v=1794300000"></script>
 </body>
 </html>

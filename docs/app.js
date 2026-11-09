@@ -1411,7 +1411,7 @@
   if (!authed() || !state.boot) {
     $('gate').hidden = false;
     initGoogle();
-    if (window.DEMO_API) $('codeBox').open = true;
+    if (window.DEMO_API) { $('codeBox').hidden = false; $('codeBox').open = true; }
   } else {
     showApp();
     // refresh lists in the background; a changed code sends people back to the gate
