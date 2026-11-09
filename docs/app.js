@@ -50,7 +50,11 @@
   };
 
   // ---------- api ----------
-  class NetError extends Error {}
+  // NetError: try again later (the queue keeps the report). server=true: the server answered with the reason, so it is shown as is
+  class NetError extends Error { constructor(msg, server) { super(msg); this.server = !!server; } }
+  // the text for a failed call: the server's own reason when it gave one, otherwise the plain "no reception" line
+  const errText = (e, offline) => (e instanceof NetError && !e.server ? offline || 'אין קליטה. נסה שוב בעוד רגע' : esc(e.message));
+  const SLOW = ['checkOut', 'issue', 'dashboard', 'photo', 'photoSet', 'report', 'backup'];
   async function api(action, payload, code) {
     const body = Object.assign({ action }, state.session && !code ? { session: state.session } : { code: code || state.code }, payload);
     let j;
@@ -59,16 +63,17 @@
     } else {
       let res;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), action === 'checkOut' || action === 'issue' ? 60000 : 20000);
+      // the dashboard reads every tab of the sheet; on a weak signal 20 seconds was not enough
+      const timer = setTimeout(() => ctrl.abort(), SLOW.includes(action) ? 60000 : 25000);
       try {
         // text/plain body keeps it a "simple" request, with no CORS preflight
         res = await fetch(window.APP_CONFIG.apiUrl, { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal });
       } catch (e) { throw new NetError('אין חיבור'); } finally { clearTimeout(timer); }
-      try { j = await res.json(); } catch (e) { throw new NetError('השרת לא זמין כרגע'); }
+      try { j = await res.json(); } catch (e) { throw new NetError('השרת לא זמין כרגע (' + res.status + ')', true); }
     }
     // retry: Google was busy or unreachable, so the report stays in the queue instead of being dropped
     if (j.signin) signOut(j.error);
-    if (!j.ok) throw new (j.retry ? NetError : Error)(j.error || 'שגיאה');
+    if (!j.ok) throw j.retry ? new NetError(j.error || 'שגיאה', true) : new Error(j.error || 'שגיאה');
     if (j.name && state.me && j.name !== state.me.name) { state.me.name = j.name; store.set('me', state.me); }
     return j;
   }
@@ -211,12 +216,12 @@
   async function onGoogle(resp) {
     $('gateErr').textContent = '';
     try {
-      const j = await api('login', { credential: resp.credential }, '-');
+      const j = await quietly(() => api('login', { credential: resp.credential }, '-'));
       Object.assign(state, { session: j.data.session, me: { name: j.data.name, email: j.data.email }, code: '' });
       store.set('session', state.session); store.set('me', state.me); store.del('code');
-      enter(await api('bootstrap', {}));
+      enter(await quietly(() => api('bootstrap', {})));
     } catch (err) {
-      $('gateErr').textContent = err instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה.' : err.message;
+      $('gateErr').innerHTML = errText(err, 'אין חיבור. נסה שוב כשיש קליטה.');
     }
   }
   // Google's script loads on its own; whichever comes last (it, or the gate) draws the button
@@ -247,12 +252,12 @@
     const code = $('gateCode').value.trim();
     $('gateErr').textContent = '';
     try {
-      const j = await api('bootstrap', {}, code);
+      const j = await quietly(() => api('bootstrap', {}, code));
       state.code = code;
       store.set('code', code);
       enter(j);
     } catch (err) {
-      $('gateErr').textContent = err instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה.' : err.message;
+      $('gateErr').innerHTML = errText(err, 'אין חיבור. נסה שוב כשיש קליטה.');
     }
   };
 
@@ -397,7 +402,8 @@
   function drawCam() {
     const n = (state.active && state.active.photos) || 0;
     $('camLabel').textContent = n ? (n === 1 ? 'תמונה אחת · עוד צילום' : `${n} תמונות · עוד צילום`) : 'צילום בחממה';
-    $('camThumbs').innerHTML = camShots.map((src, i) => `<span class="thumb"><img src="${src}" alt="תמונה ${i + 1}"></span>`).join('');
+    const more = camShots.length - 4;
+    $('camThumbs').innerHTML = camShots.slice(-4).map((src, i) => `<span class="thumb"><img src="${src}" alt="תמונה ${i + 1}"></span>`).join('') + (more > 0 ? `<span class="thumb more">+${more}</span>` : '');
     $('camThumbs').hidden = !camShots.length;
     $('camInput').disabled = n >= MAX_PHOTOS;
   }
@@ -516,7 +522,7 @@
           const rain = d.precipitation_probability_max[i] >= 30 ? `${d.precipitation_probability_max[i]}%` : '';
           return `<div class="wx-day" title="${esc(dd.text)}"><span class="nm">${i === 0 ? 'היום' : DAY_NAMES[new Date(t + 'T12:00').getDay()]}</span>${WX.icon(dd.kind)}<span class="hi">${Math.round(d.temperature_2m_max[i])}°</span><span>${Math.round(d.temperature_2m_min[i])}°</span><span class="rain">${rain}</span></div>`;
         }).join('')}</div>
-        <div class="wx-foot">תחזית ${w.model === 'ecmwf_ifs025' ? 'ECMWF, המודל שנמדד כמדויק ביותר לשניר' : 'Open-Meteo'} · מתעדכן כל חצי שעה</div>`;
+`;
       el.hidden = false;
     } catch (e) { el.hidden = true; }
   }
@@ -562,7 +568,7 @@
     const code = $('mgrCode').value.trim();
     $('mgrErr').textContent = '';
     try {
-      const j = await api('bootstrap', {}, code);
+      const j = await quietly(() => api('bootstrap', {}, code));
       if (j.role !== 'manager') { $('mgrErr').textContent = 'זה קוד עובדים, לא קוד מנהל'; return; }
       Object.assign(state, { code, role: 'manager', boot: j.data });
       store.set('code', code); store.set('role', 'manager'); store.set('boot', j.data);
@@ -571,20 +577,43 @@
     } catch (err) { $('mgrErr').textContent = err.message; }
   };
 
-  async function loadDash() {
+  // A phone that just woke up often has no network for the first second or two, so the first call failing says nothing.
+  // Network failures are retried quietly; only a failure that outlasts the retries is shown, and then as the pill, not a pop-up.
+  const RETRY_MS = [1500, 4000, 9000];
+  const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  async function quietly(fn) {
+    for (let i = 0; ; i++) {
+      try { return await fn(); } catch (e) {
+        if (!(e instanceof NetError) || e.server || i >= RETRY_MS.length) throw e;
+        await wait(RETRY_MS[i]);
+      }
+    }
+  }
+  let dashLoading = null;
+  function loadDash() {
+    if (dashLoading) return dashLoading; // the opening, the sync and a tap on refresh share one request
     $('refreshBtn').disabled = true;
+    markSync('busy');
+    if (!state.dash) { $('dashWait').hidden = false; $('dashWait').innerHTML = '<span class="spinner" role="progressbar" aria-label="טוען"></span>'; }
     renderWeatherCard();
-    try {
-      const j = await api('dashboard', {});
+    dashLoading = quietly(() => api('dashboard', {})).then((j) => {
       state.dash = j.data;
       $('dashBody').hidden = false;
+      $('dashWait').hidden = true;
       renderDash();
       lastSync = Date.now();
       markSync('');
-    } catch (e) {
-      toast(e instanceof NetError ? 'אין חיבור לשרת' : esc(e.message));
-    } finally { $('refreshBtn').disabled = false; }
+    }, (e) => {
+      markSync('off');
+      $('dashWait').hidden = !!state.dash;
+      $('dashWait').innerHTML = state.dash ? '' : `<p>${errText(e, 'אין חיבור לשרת כרגע')}</p><button type="button" class="btn primary" id="dashRetry">ניסיון נוסף</button>`;
+      // the server's reason (Google, a missing tab) is worth a pop-up; a weak signal is already on the pill
+      if (e instanceof NetError && !e.server) return;
+      toast(errText(e));
+    }).finally(() => { dashLoading = null; $('refreshBtn').disabled = false; });
+    return dashLoading;
   }
+  document.addEventListener('click', (e) => { if (e.target.closest('#dashRetry')) loadDash(); });
   $('refreshBtn').onclick = () => { state.weather = null; store.del('weather'); loadDash(); };
 
   $('rangeSeg').onclick = (e) => {
@@ -597,9 +626,12 @@
 
   // one pane of the dashboard at a time, remembered on this phone
   let pane = store.get('pane', 'today');
+  const PANES = ['today', 'gh', 'log', 'charts', 'photos', 'wx'];
+  if (!PANES.includes(pane)) pane = 'today';
   function showPane() {
     $('dashBody').dataset.pane = pane;
     setChecked($('paneSeg'), 'pane', pane);
+    if (window.FIT) FIT.first($('deck'));
   }
   showPane();
   $('paneSeg').onclick = (e) => {
@@ -647,10 +679,10 @@
       const head = [[fact(/סה"כ צמחים/), 'צמחים'], [fact(/שטח/), 'מ"ר'], [fact(/מספר שורות/), 'שורות'], [fact(/נטיעה/), '']]
         .filter(([v]) => v).map(([v, u]) => `<span>${esc(u ? v + ' ' + u : 'נטיעה ' + v)}</span>`).join('');
       const all = info.length ? `<details class="gh-info"><summary>נתוני החממה</summary><dl>${info.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>` : '';
-      return `<div class="gh"><h3>${esc(g.name)}</h3>${head ? `<p class="facts">${head}</p>` : ''}<dl>
+      return `<div class="gh" style="--gh:${ghColor(g.name)}"><h3><i class="dot"></i>${esc(g.name)}</h3>${head ? `<p class="facts">${head}</p>` : ''}<dl>
         <dt>טיפול אחרון</dt><dd>${VG.relDay(VG.lastVisit(d.log, g.name), now)}</dd>
-        <dt>עבודות שמגיעות</dt><dd class="${late ? 'late' : ''}">${late}</dd>
-        <dt>בעיות פתוחות</dt><dd class="${iss ? 'late' : ''}">${iss}</dd>
+        <dt>מתעכבות</dt><dd class="${late ? 'late' : ''}">${late}</dd>
+        <dt>בעיות</dt><dd class="${iss ? 'late' : ''}">${iss}</dd>
         <dt>שעות</dt><dd>${VG.hoursText(hoursByGh[g.name] || 0)}</dd></dl>${all}</div>`;
     }).join('');
 
@@ -686,6 +718,12 @@
   }
 
   const isWork = (r) => r['קוד עבודה'] !== 'PHOTO';
+  function ghColor(name) {
+    if (name === WAREHOUSE) return 'var(--gh-wh)';
+    const list = (state.dash || state.boot || {}).greenhouses || [];
+    const i = list.findIndex((g) => g.name === name || g.id === name);
+    return i < 0 ? 'var(--text-2)' : `var(--gh${(i % 6) + 1})`;
+  }
   const sumHours = (rows) => rows.reduce((a, r) => a + (Number(r['שעות']) || 0), 0);
   const sumQty = (rows, code) => rows.filter((r) => r['קוד עבודה'] === code).reduce((a, r) => a + (Number(r['כמות']) || 0), 0);
 
@@ -711,18 +749,20 @@
   function renderKpis(R) {
     const cur = R.log.filter(isWork), prev = R.prevLog.filter(isWork);
     const hasPrev = state.range !== 'all';
+    const openNow = (state.dash.issues || []).filter((r) => r['סטטוס'] !== 'טופל').length;
     const tiles = [
-      { t: 'שעות בחממות', v: sumHours(cur), p: sumHours(prev), hours: true },
-      { t: 'ביקורים', v: cur.length, p: prev.length },
-      { t: 'פרחים הואבקו', v: sumQty(cur, 'W01'), p: sumQty(prev, 'W01') },
-      { t: 'תרמילים נקטפו', v: sumQty(cur, 'W11'), p: sumQty(prev, 'W11'), pod: true },
-      { t: 'ק"ג מוינו', v: sumQty(cur, 'W12'), p: sumQty(prev, 'W12'), pod: true },
+      { t: 'שעות', v: sumHours(cur), p: sumHours(prev), hours: true, c: 'hours' },
+      { t: 'ביקורים', v: cur.length, p: prev.length, c: 'visits' },
+      { t: 'פרחים הואבקו', v: sumQty(cur, 'W01'), p: sumQty(prev, 'W01'), c: 'flower' },
+      { t: 'תרמילים נקטפו', v: sumQty(cur, 'W11'), p: sumQty(prev, 'W11'), c: 'pod' },
+      { t: 'ק"ג מוינו', v: sumQty(cur, 'W12'), p: sumQty(prev, 'W12'), c: 'kg' },
+      { t: 'בעיות פתוחות', v: openNow, p: openNow, c: 'issue', now: true },
     ];
     $('kpis').innerHTML = tiles.map((x) => {
       const val = x.hours ? VG.hoursText(x.v) : fmtNum(x.v);
       const diff = x.v - x.p;
       const dt = x.hours ? (diff === 0 ? 'ללא שינוי' : (diff > 0 ? '+' : '-') + VG.hoursText(Math.abs(diff))) : deltaText(x.v, x.p);
-      return `<div class="kpi${x.pod ? ' pod' : ''}"><span class="v">${val}</span><span class="t">${x.t}</span>${hasPrev ? `<br><span class="delta ${diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat'}">${dt}</span>` : ''}</div>`;
+      return `<div class="kpi ${x.c}"><span class="t">${x.t}</span><span class="v">${val}</span>${hasPrev && !x.now ? `<span class="delta ${diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat'}">${dt}</span>` : ''}</div>`;
     }).join('');
   }
 
@@ -741,15 +781,14 @@
       const mine = d.log.filter((r) => r['חממה'] === g.name && typeof r['תאריך'] === 'number');
       const q = (code, from, to) => mine.filter((r) => r['קוד עבודה'] === code && r['תאריך'] >= from && r['תאריך'] <= to).reduce((a, r) => a + (Number(r['כמות']) || 0), 0);
       const pol = mine.filter((r) => r['קוד עבודה'] === 'W01' && Number(r['כמות']) > 0 && r['תאריך'] >= now - 7.5 * M).map((r) => r['תאריך']).sort((a, b) => a - b);
-      return `<div class="row"><h3>${esc(g.name)}</h3><div class="vine" role="list">
+      return `<div class="row" style="--gh:${ghColor(g.name)}"><h3><i class="dot"></i>${esc(g.name)}</h3><div class="vine" role="list">
         ${stage('flower', q('W01', R.from, R.to), 'הואבקו בטווח')}
         ${stage('pod', q('W01', now - 7.5 * M, now), 'תרמילים בהתפתחות')}
         ${stage('ripe', q('W01', now - 9.5 * M, now - 7.5 * M), 'מבשילים לקטיף')}
         ${stage('cured', q('W11', R.from, R.to), 'נקטפו בטווח')}
       </div>${pol.length ? `<p class="foot">הקטיף הבא צפוי ב${fmtMonth(pol[0] + 8 * M)}</p>` : ''}</div>`;
     });
-    const kg = sumQty(R.log, 'W12');
-    $('journey').innerHTML = rows.join('') + `<p class="foot">${fmtNum(kg)} ק"ג מוינו במחסן בטווח. ההערכה לפי 8 עד 9 חודשים מהאבקה לקטיף, וכל פרח שהואבק נספר כתרמיל.</p>`;
+    $('journey').innerHTML = rows.join('');
   }
 
   // ---------- charts (SVG, newest on the left as Hebrew reads) ----------
@@ -794,7 +833,7 @@
 
   function renderHours(d, R) {
     const names = d.greenhouses.map((g) => g.name).concat(R.log.some((r) => r['חממה'] === WAREHOUSE) ? [WAREHOUSE] : []);
-    const series = names.map((n, i) => ({ key: n, name: n, color: n === WAREHOUSE ? 'var(--g4)' : `var(--g${Math.min(3, i + 1)})` }));
+    const series = names.map((n) => ({ key: n, name: n, color: ghColor(n) }));
     const P = periods(R);
     const work = R.log.filter(isWork);
     const unitName = { day: 'יום', week: 'שבוע', month: 'חודש' }[P.unit];
@@ -808,10 +847,10 @@
     $('chartLegend').innerHTML = series.map((x) => `<span><i style="background:${x.color}"></i>${esc(x.name)}</span>`).join('');
     $('hoursChart').innerHTML = work.length ? stackedBars(groups, series, `שעות בחממות לפי ${unitName}: סך הכול ${VG.hoursText(total)} שעות ב-${work.length} ביקורים`, (v) => VG.hoursText(v), chartWidth($('hoursChart'))) : '<p class="empty">אין ביקורים בטווח הזה</p>';
 
-    const byWork = Object.entries(VG.sumBy(work, 'עבודה', 'שעות')).filter((x) => x[0]).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const byWork = Object.entries(VG.sumBy(work, 'עבודה', 'שעות')).filter((x) => x[0]).sort((a, b) => b[1] - a[1]).slice(0, 6);
     const max = Math.max(1, ...byWork.map((x) => x[1]));
     $('workBars').innerHTML = byWork.map(([n, h]) =>
-      `<div class="row" role="img" aria-label="${esc(n)}: ${VG.hoursText(h)} שעות"><span>${esc(n)}</span><div class="track"><div class="fill" style="width:${(h / max) * 100}%"></div></div><span class="val">${VG.hoursText(h)}</span></div>`).join('');
+      `<div class="row" role="img" aria-label="${esc(n)}: ${VG.hoursText(h)} שעות"><span class="nm">${esc(n)}</span><div class="track"><div class="fill" style="width:${(h / max) * 100}%"></div></div><span class="val">${VG.hoursText(h)}</span></div>`).join('');
   }
 
   async function renderWxHistory(d, R) {
@@ -857,17 +896,12 @@
     const items = R.log.concat(R.issues, sets).filter((r) => !galGh || r['חממה'] === galGh)
       .flatMap((r) => VG.photoLinks(r['תמונה']).map((p) => ({ r, p, t: r['כניסה'] || r['תאריך'] })))
       .filter((x) => typeof x.t === 'number').sort((a, b) => b.t - a.t).slice(0, 120);
-    const days = [];
-    items.forEach((x) => { const k = isoDay(x.t); const last = days[days.length - 1]; if (last && last.k === k) last.items.push(x); else days.push({ k, t: x.t, items: [x] }); });
     const wx = state.wxHist || {};
-    $('gallery').innerHTML = days.map((day) => {
-      const w = wx[day.k];
-      const chip = w ? `<span class="sub">${Math.round(w.hi)}° / ${Math.round(w.lo)}° · לחות ${Math.round(w.rh)}%${w.rain >= 1 ? ' · גשם ' + Math.round(w.rain) + ' מ"מ' : ''}</span>` : '';
-      return `<section class="day"><h3>יום ${DAY_NAMES[new Date(day.t).getDay()]} ${fmtDate(day.t)} ${chip}</h3><div class="grid">${day.items.map(({ r, p, t }) => {
-        const cap = `${r['חממה'] || ''} · ${hhmm(t)}${r['עבודה'] ? ' · ' + r['עבודה'] : r['קטגוריה'] ? ' · ' + r['קטגוריה'] : ''}`;
-        const thumb = window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + p.id + '&sz=w400';
-        return `<button type="button" data-id="${esc(p.id)}" data-row="${esc(r['מזהה'] || '')}" data-cap="${esc(cap)}"><img loading="lazy" src="${thumb}" alt="${esc(cap)}"><figcaption>${esc((r['חממה'] || '') + ' · ' + hhmm(t))}</figcaption></button>`;
-      }).join('')}</div></section>`;
+    $('gallery').innerHTML = items.map(({ r, p, t }) => {
+      const w = wx[isoDay(t)];
+      const cap = [`${r['חממה'] || ''} · ${fmtDate(t)} ${hhmm(t)}`, r['עבודה'] || r['קטגוריה'] || '', w ? `${Math.round(w.hi)}°/${Math.round(w.lo)}° · לחות ${Math.round(w.rh)}%` : ''].filter(Boolean).join(' · ');
+      const thumb = window.DEMO_API ? 'icons/icon.svg' : 'https://drive.google.com/thumbnail?id=' + p.id + '&sz=w400';
+      return `<button type="button" style="--gh:${ghColor(r['חממה'])}" data-id="${esc(p.id)}" data-row="${esc(r['מזהה'] || '')}" data-cap="${esc(cap)}"><img loading="lazy" src="${thumb}" alt="${esc(cap)}"><figcaption>${esc((r['חממה'] || '') + ' · ' + fmtDate(t))}</figcaption></button>`;
     }).join('') || '<p class="empty">אין תמונות בטווח הזה</p>';
   }
   $('gallery').onclick = (e) => {
@@ -921,7 +955,7 @@
       editing = (await api('rowGet', { id, worker: state.worker })).data;
       drawEdit();
       if (!$('editDlg').open) $('editDlg').showModal();
-    } catch (e) { toast(e instanceof NetError ? 'אין חיבור. אפשר לערוך כשיש קליטה' : esc(e.message)); }
+    } catch (e) { toast(errText(e, 'אין חיבור. אפשר לערוך כשיש קליטה')); }
   }
   // after a change: the journal of today and the dashboard show what the sheet now holds
   function afterEdit(id, row) {
@@ -954,7 +988,7 @@
       $('editDlg').close();
       toast('השינוי נשמר');
       afterEdit(out.id, j.data);
-    } catch (e) { toast(e instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה' : esc(e.message)); } finally { $('eSave').disabled = false; }
+    } catch (e) { toast(errText(e, 'אין חיבור. נסה שוב כשיש קליטה')); } finally { $('eSave').disabled = false; }
   };
   $('eDelete').onclick = async () => {
     const b = $('eDelete');
@@ -964,7 +998,7 @@
       $('editDlg').close();
       toast('הרשומה נמחקה');
       afterEdit(editing['מזהה'], null);
-    } catch (e) { toast(e instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה' : esc(e.message)); }
+    } catch (e) { toast(errText(e, 'אין חיבור. נסה שוב כשיש קליטה')); }
   };
   $('ePhotos').onclick = async (e) => {
     const b = e.target.closest('button[data-url]');
@@ -975,7 +1009,7 @@
       drawEditPhotos(); // the fields keep what was typed
       toast('התמונה נמחקה');
       afterEdit(editing['מזהה'], editing);
-    } catch (err) { toast(err instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה' : esc(err.message)); }
+    } catch (err) { toast(errText(err, 'אין חיבור. נסה שוב כשיש קליטה')); }
   };
 
   // ---------- backup status ----------
@@ -1005,7 +1039,7 @@
       state.dash.system = Object.assign({}, state.dash.system, { lastBackup: j.data.at });
       renderSystem(state.dash.system);
       toast(`הגיבוי נשמר · <a href="${esc(j.data.url)}" target="_blank" rel="noopener">פתיחה</a>`);
-    } catch (e) { toast(e instanceof NetError ? 'אין חיבור לשרת' : esc(e.message)); } finally { $('backupBtn').disabled = false; }
+    } catch (e) { toast(errText(e, 'אין חיבור לשרת')); } finally { $('backupBtn').disabled = false; }
   };
 
   // ---------- future tasks ----------
@@ -1066,7 +1100,7 @@
       if (t) t['סטטוס'] = 'בוצע';
       toast('סומן כבוצע');
       return true;
-    } catch (e) { toast(e instanceof NetError ? 'אין חיבור. נסה שוב כשיש קליטה' : esc(e.message)); return false; }
+    } catch (e) { toast(errText(e, 'אין חיבור. נסה שוב כשיש קליטה')); return false; }
   }
   $('tList').onclick = async (e) => { const b = e.target.closest('[data-done]'); if (b && await markDone(b.dataset.done, state.dash.tasks)) renderTasks(); };
 
@@ -1080,7 +1114,7 @@
       <button type="button" class="btn plain danger" data-del="${esc(u.email)}" aria-label="הסרת ${esc(u.name)}">הסרה</button>`}</li>`).join('');
   }
   async function usersCall(action, payload) {
-    try { renderUsers((await api(action, payload)).data); return true; } catch (e) { toast(e instanceof NetError ? 'אין חיבור' : esc(e.message)); return false; }
+    try { renderUsers((await api(action, payload)).data); return true; } catch (e) { toast(errText(e, 'אין חיבור')); return false; }
   }
   $('usersBtn').onclick = () => { $('uList').innerHTML = ''; $('usersDlg').showModal(); usersCall('users', {}); };
   $('uForm').onsubmit = async (e) => {
@@ -1115,6 +1149,7 @@
     radios($('upGh'), d.greenhouses.map((g) => ({ v: g.id, t: g.name })), state.upGh, (v) => { state.upGh = v; validateUpload(); });
     validateUpload();
   }
+  $('upOpen').onclick = () => { renderUpload(state.dash); $('uploadDlg').showModal(); };
   $('upBtn').onclick = async () => {
     const n = state.upPhotos.length;
     const payload = { id: uid('P'), gh: state.upGh, date: Date.now(), note: $('upNote').value.trim(), by: state.worker || 'מנהל' };
@@ -1123,6 +1158,7 @@
     upPicker.reset(state.upPhotos);
     $('upNote').value = '';
     $('upBtn').disabled = true;
+    $('uploadDlg').close();
     toast(`מעלה ${n} תמונות…`);
     const sent = await flush();
     toast(sent ? `${n} תמונות הועלו` : `${n} תמונות נשמרו ויעלו כשתהיה קליטה`);
@@ -1150,9 +1186,7 @@
       const dt = k === 'hours' ? (diff === 0 ? 'ללא שינוי' : (diff > 0 ? '+' : '-') + VG.hoursText(Math.abs(diff))) : deltaText(r[k], p[k]);
       return `<td class="num ${r[k] === best[k] && r[k] > 0 ? 'best' : ''}">${v}${hasPrev ? `<span class="delta ${cls}">${dt}</span>` : ''}</td>`;
     };
-    $('compareBody').innerHTML = cur.map((r, i) => `<tr><td>${esc(r.gh)}</td><td class="num">${r.last ? fmtDate(r.last) : '–'}</td>${keys.map((k) => cell(k, r, prev[i])).join('')}</tr>`).join('');
-    const labels = { 7: 'השבוע מול השבוע שלפניו', 30: '30 הימים האחרונים מול 30 הימים שלפניהם', 365: 'השנה האחרונה מול השנה שלפניה' };
-    $('compareNote').textContent = hasPrev ? labels[state.range] + '. הערך הגבוה בכל עמודה מודגש.' : 'כל התקופה. הערך הגבוה בכל עמודה מודגש.';
+    $('compareBody').innerHTML = cur.map((r, i) => `<tr style="--gh:${ghColor(r.gh)}"><th scope="row"><i class="dot"></i>${esc(r.gh)}</th><td class="num last">${r.last ? fmtDate(r.last) : '–'}</td>${keys.map((k) => cell(k, r, prev[i])).join('')}</tr>`).join('');
   }
 
   function fillFilter(sel, all, values) {
@@ -1165,14 +1199,16 @@
     const gh = $('fGh').value, w = $('fWorker').value;
     const rows = R.log.filter((r) => (!gh || r['חממה'] === gh) && (!w || r['עובד'] === w))
       .sort((a, b) => (b['כניסה'] || b['תאריך']) - (a['כניסה'] || a['תאריך'])).slice(0, 200);
-    $('logBody').innerHTML = rows.map((r) => `<tr>
-      <td>${fmtDate(r['תאריך'])}</td><td>${esc(r['עובד'])}</td><td>${esc(r['חממה'])}</td>
-      <td>${esc(r['עבודה'] || r['קוד עבודה'] || '')}${r['סטטוס'] === 'פתוח' ? ' <span class="pill doing">בחממה</span>' : ''}</td>
-      <td class="num">${r['שעות'] === '' || r['שעות'] == null ? '' : VG.hoursText(r['שעות'])}</td>
-      <td class="num">${r['כמות'] === '' || r['כמות'] == null ? '' : esc(r['כמות']) + ' ' + esc(r['יחידה'] || '')}</td>
-      <td>${VG.photoLinks(r['תמונה']).map((p, i) => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${i + 1}</a>`).join(' ')}</td>
-      <td>${r['מזהה'] ? `<button type="button" class="btn plain" data-edit="${esc(r['מזהה'])}">עריכה</button>` : ''}</td></tr>`).join('')
-      || '<tr><td colspan="8" class="empty">אין רשומות</td></tr>';
+    $('logBody').innerHTML = rows.map((r) => {
+      const bits = [fmtDate(r['תאריך']), esc(r['עובד'])];
+      if (r['שעות'] !== '' && r['שעות'] != null) bits.push(VG.hoursText(r['שעות']) + ' ש\'');
+      if (r['כמות'] !== '' && r['כמות'] != null) bits.push(esc(r['כמות']) + ' ' + esc(r['יחידה'] || ''));
+      const pics = VG.photoLinks(r['תמונה']);
+      if (pics.length) bits.push(`<a href="${esc(pics[0].url)}" target="_blank" rel="noopener">${pics.length === 1 ? 'תמונה' : pics.length + ' תמונות'}</a>`);
+      return `<li style="--gh:${ghColor(r['חממה'])}"><span class="gh-tag">${esc(r['חממה'] || '')}</span>
+        <div class="main">${esc(r['עבודה'] || r['קוד עבודה'] || '')}${r['סטטוס'] === 'פתוח' ? ' <span class="pill doing">בחממה</span>' : ''}<div class="sub">${bits.map((b) => `<bdi class="nw">${b}</bdi>`).join(' · ')}</div></div>
+        ${r['מזהה'] ? `<button type="button" class="btn plain" data-edit="${esc(r['מזהה'])}">עריכה</button>` : ''}</li>`;
+    }).join('') || '<li class="empty">אין רשומות</li>';
   }
   $('fGh').onchange = renderLog;
   $('fWorker').onchange = renderLog;
@@ -1311,7 +1347,7 @@
 
   // ---------- live sync: what changes in the sheet shows up here, and what is done here reaches the sheet ----------
   const SYNC_MS = 20000;
-  let lastSync = 0, syncing = false, lastStamp = '';
+  let lastSync = 0, syncing = false, lastStamp = '', syncFails = 0;
   function markSync(cls) {
     const el = $('syncState');
     el.className = 'sync ' + cls;
@@ -1342,7 +1378,11 @@
       }
       lastSync = Date.now();
       markSync('');
-    } catch (e) { markSync('off'); } finally { syncing = false; }
+      syncFails = 0;
+    } catch (e) {
+      // one missed round on a weak signal is normal; the pill turns orange only when it keeps failing
+      markSync(++syncFails >= 2 || (e instanceof NetError && e.server) ? 'off' : '');
+    } finally { syncing = false; }
   }
   setInterval(() => sync(), SYNC_MS);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(true); });
@@ -1354,7 +1394,7 @@
     // a worker's Google account has no dashboard; a manager opens on it
     $('dashTab').hidden = !!state.session && state.role !== 'manager';
     renderReport();
-    if (state.role === 'manager') showTab('dash');
+    showTab(state.role === 'manager' ? 'dash' : 'report');
     renderPending();
     if (!state.worker && workerList().length > 1) pickWorker();
     flush();
@@ -1375,7 +1415,7 @@
   } else {
     showApp();
     // refresh lists in the background; a changed code sends people back to the gate
-    api('bootstrap', {}).then((j) => {
+    quietly(() => api('bootstrap', {})).then((j) => {
       state.boot = j.data; state.role = j.role;
       store.set('boot', j.data); store.set('role', j.role);
       if (!state.active) renderReport();
