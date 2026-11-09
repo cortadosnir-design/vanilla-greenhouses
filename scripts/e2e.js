@@ -31,6 +31,23 @@ async function pickWork(p, code) {
   await p.selectOption('#workSel', code);
 }
 
+// nothing scrolls: a row on another page is brought to its page first, the way a person would page to it
+const reveal = (p, sel) => p.locator(sel).first().evaluate((el) => window.FIT.reveal(el));
+async function tap(p, sel) { await reveal(p, sel); await p.click(sel); }
+// no page, card list or sheet ever scrolls, down or sideways
+async function noScroll(p, where) {
+  const bad = await p.evaluate(() => {
+    const de = document.documentElement, out = [];
+    if (de.scrollHeight > innerHeight + 1 || de.scrollWidth > innerWidth + 1) out.push('page ' + de.scrollWidth + 'x' + de.scrollHeight);
+    document.querySelectorAll('*').forEach((el) => {
+      const s = getComputedStyle(el);
+      if (/(auto|scroll)/.test(s.overflowY + s.overflowX) && el.getClientRects().length && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) out.push(el.id || el.className);
+    });
+    return out;
+  });
+  assert.deepStrictEqual(bad, [], where + ' scrolls: ' + bad.join(', '));
+}
+
 async function skipIntro(p) {
   await p.waitForSelector('#intro');
   if (!(await p.$('#intro.gone'))) await p.click('#intro').catch(() => {});
@@ -75,6 +92,7 @@ async function skipIntro(p) {
   await page.waitForSelector('#wxStrip:not([hidden])');
   assert.match(await page.textContent('#wxStrip'), /16°/);
   await page.screenshot({ path: path.join(SHOTS, '03-report-idle.png') });
+  await noScroll(page, 'work screen');
 
   // 1b. a stale/bad greenhouse id from a QR is dropped
   await page.goto(BASE + '?gh=GH9');
@@ -100,6 +118,7 @@ async function skipIntro(p) {
   await page.waitForTimeout(1500);
   assert.match(await page.textContent('#timer'), /^0:00:0[1-9]$/);
   await page.screenshot({ path: path.join(SHOTS, '04-active.png') });
+  await noScroll(page, 'visit screen');
 
   // persistence: reload keeps the session
   await page.reload();
@@ -133,11 +152,11 @@ async function skipIntro(p) {
   assert.match(dayText, /האבקה ידנית של פרחים/);
   assert.match(dayText, /42 פרחים/);
   assert.match(await page.textContent('#daySum'), /1 עבודות/);
-  await page.screenshot({ path: path.join(SHOTS, '04c-my-day.png'), fullPage: true });
-
-  // 3b. tap a line of my day to change it: the quantity, a photo
-  await page.click('#dayBox summary');
-  await page.click('#dayList [data-edit]');
+  // 3b. my day is its own tab; tap a line of it to change it: the quantity, a photo
+  await page.click('.tabs button[data-tab=day]');
+  await page.screenshot({ path: path.join(SHOTS, '04c-my-day.png') });
+  await noScroll(page, 'my day');
+  await tap(page, '#dayList [data-edit]');
   await page.waitForSelector('#editDlg[open]');
   assert.strictEqual(await page.inputValue('#eQty'), '42');
   await page.fill('#eQty', '50');
@@ -155,6 +174,7 @@ async function skipIntro(p) {
   assert.match(await page.textContent('#dayList'), /תיקון/);
   server = await (await page.request.get(BASE + '__calls')).json();
   assert.strictEqual(server.log.find((r) => r['מזהה'] === mine['מזהה'])['כמות'], 50, 'the change reached the sheet');
+  await page.click('.tabs button[data-tab=report]');
 
   // 4. warehouse work hides greenhouse picker
   await pickWork(page, 'W12');
@@ -180,7 +200,7 @@ async function skipIntro(p) {
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await page.waitForSelector('#pending', { state: 'hidden', timeout: 5000 });
   server = await (await page.request.get(BASE + '__calls')).json();
-  assert.strictEqual(server.calls.filter((c) => c === 'checkIn').length, 2, 'queued check-in flushed');
+  assert.strictEqual(server.calls.filter((c) => c === 'checkIn').length, 2, 'queued check-in flushed: ' + server.calls.join(','));
   assert.strictEqual(server.calls.filter((c) => c === 'checkOut').length, 2, 'queued check-out flushed');
 
   // 5b. enqueue while a send is in flight: slow the API, check in and out back to back, both must arrive
@@ -205,6 +225,7 @@ async function skipIntro(p) {
   await page.fill('#issueDesc', 'אקריות בשורה 1');
   assert.ok(!(await page.isDisabled('#issueBtn')));
   await page.screenshot({ path: path.join(SHOTS, '06-issue.png') });
+  await noScroll(page, 'issue screen');
   await page.click('#issueBtn');
   await page.waitForSelector('#toast.show');
   server = await (await page.request.get(BASE + '__calls')).json();
@@ -223,41 +244,48 @@ async function skipIntro(p) {
   assert.strictEqual(await page.getAttribute('#dashBody', 'data-pane'), 'today');
   assert.ok(await page.isHidden('#ghCards'), 'one pane at a time');
   assert.ok((await page.textContent('#dueList')).includes('חממה'), 'due list has items');
-  await page.waitForSelector('#wxCard:not([hidden])');
+  await page.waitForSelector('#wxCard:not([hidden])', { state: 'attached' });
   assert.ok((await page.$$('#wxCard .wx-day')).length === 7, '7 forecast days');
   assert.match(await page.textContent('#wxCard .wx-alerts'), /חום של 36/);
-  assert.strictEqual((await page.$$('#kpis .kpi')).length, 5, 'five numbers on top');
+  assert.strictEqual((await page.$$('#kpis .kpi')).length, 6, 'six numbers on top');
   assert.ok((await page.textContent('#nowCard')).length > 3, 'who is in the greenhouse now');
-  await page.screenshot({ path: path.join(SHOTS, '07-dash-phone.png'), fullPage: true });
+  await page.screenshot({ path: path.join(SHOTS, '07-dash-phone.png') });
+  await noScroll(page, 'dashboard today');
   await page.click('#paneSeg button[data-pane=gh]');
   await page.waitForSelector('#ghCards .gh');
   assert.strictEqual((await page.$$('#ghCards .gh')).length, 3);
   assert.ok((await page.$$('#compareBody tr')).length === 3, 'comparison rows');
   assert.strictEqual((await page.$$('#journey .vine')).length, 3, 'vanilla journey per greenhouse');
   assert.ok((await page.$$('#compareBody .delta')).length >= 15, 'comparison deltas');
-  await page.screenshot({ path: path.join(SHOTS, '07a-dash-gh.png'), fullPage: true });
-  await page.click('#paneSeg button[data-pane=log]');
-  await page.waitForSelector('#hoursChart svg rect.b');
-  await page.waitForSelector('#wxHistory svg polyline.hi');
+  await page.screenshot({ path: path.join(SHOTS, '07a-dash-gh.png') });
+  await noScroll(page, 'dashboard greenhouses');
+  await page.click('#paneSeg button[data-pane=charts]');
+  await page.waitForSelector('#hoursChart svg rect.b', { state: 'attached' });
+  await page.waitForSelector('#wxHistory svg polyline.hi', { state: 'attached' });
+  await noScroll(page, 'dashboard charts');
+  await page.click('#paneSeg button[data-pane=wx]');
+  await noScroll(page, 'dashboard forecast');
   await page.click('#paneSeg button[data-pane=photos]');
   await page.waitForSelector('#gallery button');
-  assert.match(await page.textContent('#gallery'), /לחות 72%/, "each gallery day shows that day's weather");
+  assert.match(await page.getAttribute('#gallery button', 'data-cap'), /לחות 72%/, "each photo carries that day's weather");
+  await noScroll(page, 'dashboard photos');
   assert.strictEqual(await page.evaluate(() => document.documentElement.scrollWidth), 390, 'the dashboard never widens the phone page');
   await page.click('#rangeSeg button[data-range=all]');
   assert.strictEqual((await page.$$('#compareBody .delta')).length, 0, 'no deltas for "all"');
   await page.click('#rangeSeg button[data-range="30"]');
   assert.ok((await page.textContent('#issueList')).includes('אקריות'));
-  assert.ok((await page.$$('#logBody tr')).length >= 5);
+  assert.ok((await page.$$('#logBody li')).length >= 5);
   await page.click('#paneSeg button[data-pane=log]');
+  await noScroll(page, 'dashboard log');
   // delete a record from the work log: two taps, and it is gone from the dashboard (marked in the sheet)
-  const logRows = (await page.$$('#logBody tr')).length;
-  await page.click('#logBody [data-edit="L-3"]');
+  const logRows = (await page.$$('#logBody li')).length;
+  await tap(page, '#logBody [data-edit="L-3"]');
   await page.waitForSelector('#editDlg[open]');
   await page.click('#eDelete');
   assert.strictEqual(await page.textContent('#eDelete'), 'למחוק את הרשומה?');
   await page.click('#eDelete');
   await page.waitForFunction(() => !document.getElementById('editDlg').open);
-  await page.waitForFunction((n) => document.querySelectorAll('#logBody tr').length === n - 1, logRows);
+  await page.waitForFunction((n) => document.querySelectorAll('#logBody li').length === n - 1, logRows);
   server = await (await page.request.get(BASE + '__calls')).json();
   assert.strictEqual(server.log.find((r) => r['מזהה'] === 'L-3')['סטטוס'], 'נמחק', 'kept in the sheet, marked deleted');
 
@@ -272,7 +300,7 @@ async function skipIntro(p) {
   await page.waitForFunction((n) => Number(document.querySelector('#tasksCount').textContent) === n, before, { timeout: 10000 });
 
   // comparison has a date column before hours
-  assert.strictEqual(await page.textContent('table.compare thead th:nth-child(2)'), 'תאריך אחרון');
+  assert.strictEqual(await page.textContent('table.compare thead th:nth-child(2)'), 'טיפול אחרון');
 
   // future tasks: add one, see the count, mark one done
   assert.strictEqual(await page.textContent('#tasksCount'), '1');
@@ -287,10 +315,11 @@ async function skipIntro(p) {
   await page.waitForSelector('#tList li:has-text("עיצוב לולאות")');
   assert.strictEqual(await page.textContent('#tasksCount'), '2');
   await page.screenshot({ path: path.join(SHOTS, '07c-tasks.png') });
+  await noScroll(page, 'tasks sheet');
   server = await (await page.request.get(BASE + '__calls')).json();
   const added = server.tasks.find((t) => t['עובד'] === 'יוסי');
   assert.ok(added && added['חממה'] === 'חממה 2' && new Date(added['תאריך ביצוע']).getDate() === 20, 'task stored with date');
-  await page.click('#tList li:has-text("ניטור מזיקים") [data-done]');
+  await tap(page, '#tList li:has-text("ניטור מזיקים") [data-done]');
   await page.waitForFunction(() => document.querySelector('#tasksCount').textContent === '1');
   await page.click('#tasksDlg [data-close]');
 
@@ -298,7 +327,8 @@ async function skipIntro(p) {
   const png = path.join(__dirname, '..', 'docs', 'icons', 'icon-512.png');
   const png2 = path.join(__dirname, '..', 'docs', 'icons', 'icon-180.png');
   await page.click('#paneSeg button[data-pane=photos]');
-  await page.click('.upload-box summary');
+  await page.click('#upOpen');
+  await page.waitForSelector('#uploadDlg[open]');
   assert.ok(await page.isDisabled('#upBtn'), 'upload disabled without photos');
   await page.click('#upGh button[data-v=GH3]');
   await page.fill('#upNote', 'פריחה ראשונה');
@@ -310,8 +340,8 @@ async function skipIntro(p) {
   await page.setInputFiles('#upPhoto', Array(25).fill(png));
   await page.waitForFunction(() => document.querySelectorAll('#upThumbs .thumb').length === 20, null, { timeout: 30000 });
   assert.ok(await page.isDisabled('#upPhoto'), 'picker disabled at 20');
-  await page.locator('#upThumbs').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SHOTS, '07b-upload.png') });
+  await noScroll(page, 'upload sheet');
   await page.click('#upBtn');
   await page.waitForSelector('#toast.show:has-text("הועלו")', { timeout: 30000 });
   server = await (await page.request.get(BASE + '__calls')).json();
@@ -320,14 +350,14 @@ async function skipIntro(p) {
   assert.strictEqual(set['הערה'], 'פריחה ראשונה');
   assert.strictEqual(set['תמונה'].split('\n').length, 20, 'all 20 photos reached the server');
   await page.waitForFunction(() => document.querySelectorAll('#gallery img').length >= 20);
-  await page.click('#gallery button[data-id]');
+  await tap(page, '#gallery button[data-id]');
   await page.waitForSelector('#lightbox[open]');
   assert.match(await page.getAttribute('#lbLink', 'href'), /^https:\/\/drive\.google\.com\/file\/d\//);
   await page.click('#lightbox [data-close]');
 
   // resolve an issue
   await page.click('#paneSeg button[data-pane=today]');
-  await page.click('#issueList button[data-id]');
+  await tap(page, '#issueList button[data-id]');
   await page.waitForSelector('#resolveDlg[open]');
   await page.click('#resolveSeg button[data-status=טופל]');
   await page.fill('#resolveText', 'רוסס');
@@ -362,10 +392,11 @@ async function skipIntro(p) {
   await dp.click('.tabs button[data-tab=dash]');
   await dp.waitForSelector('#nowCard .main');
   await dp.waitForTimeout(700);
-  await dp.screenshot({ path: path.join(SHOTS, '08-dash-desktop-dark.png'), fullPage: true });
+  await dp.screenshot({ path: path.join(SHOTS, '08-dash-desktop-dark.png') });
+  await noScroll(dp, 'desktop dashboard');
   await dp.click('#rangeSeg button[data-range=all]');
   await dp.waitForTimeout(700);
-  await dp.screenshot({ path: path.join(SHOTS, '09-dash-desktop-all.png'), fullPage: true });
+  await dp.screenshot({ path: path.join(SHOTS, '09-dash-desktop-all.png') });
   const demoCalls = await (await dp.request.get(BASE + '__calls')).json();
   assert.strictEqual(demoCalls.calls.length, callsBeforeDemo, 'demo mode never hit the server');
   await dp.goto(BASE + '?demo=off');
@@ -411,7 +442,7 @@ async function skipIntro(p) {
   const u = (await (await gp.request.get(BASE + '__calls')).json());
   assert.deepStrictEqual(u.calls.filter((c) => /^user/.test(c)), ['users', 'userSet', 'userSet', 'userDel']);
   await gp.click('#usersDlg [data-close]');
-  await gp.click('.tabs button[data-tab=report]');
+  await gp.click('.tabs button[data-tab=day]');
   await gp.click('#signOutBtn');
   await gp.waitForSelector('#gate:not([hidden])');
   await gp.evaluate(() => { window.TEST_EMAIL = 'shahar@gmail.com'; });
@@ -419,6 +450,40 @@ async function skipIntro(p) {
   await gp.waitForSelector('#app:not([hidden])');
   assert.ok(await gp.isHidden('#dashTab'), 'a worker account has no dashboard tab');
   assert.ok(!(await gp.isHidden('#report')), 'a worker opens on the work screen');
+
+  // 10. opening on a phone that has no network for its first moments: no "no connection" message, the dashboard comes up by itself
+  const wake = await browser.newContext({ ...devices['iPhone 13'], locale: 'he-IL', timezoneId: 'Asia/Jerusalem', serviceWorkers: 'block' });
+  await wake.route('**/fonts.googleapis.com/**', (r) => r.fulfill({ body: '', contentType: 'text/css' }));
+  await wake.route('**/api.open-meteo.com/**', meteo);
+  await wake.route('**/accounts.google.com/**', gsi);
+  const wp = await wake.newPage();
+  wp.on('pageerror', (e) => errors.push('wake pageerror: ' + e.message));
+  await wp.goto(BASE);
+  await skipIntro(wp);
+  await wp.click('#codeBox summary');
+  await wp.fill('#gateCode', '9876');
+  await wp.click('#gateForm button[type=submit]');
+  await wp.waitForSelector('#whoDlg[open]');
+  await wp.click('#whoList button:has-text("דנה")');
+  await wp.waitForSelector('#dashBody:not([hidden])');
+  let dropped = 0;
+  await wake.route('**/api', (r) => (dropped++ < 3 ? r.abort() : r.continue()));
+  const toasts = [];
+  await wp.exposeFunction('__toast', (t) => toasts.push(t));
+  await wp.addInitScript(() => new MutationObserver(() => { const t = document.getElementById('toast'); if (t && t.classList.contains('show')) window.__toast(t.textContent); })
+    .observe(document, { subtree: true, attributes: true, attributeFilter: ['class'] }));
+  await wp.reload();
+  await skipIntro(wp);
+  await wp.waitForFunction(() => document.getElementById('syncState').textContent.includes('מסונכרן'), null, { timeout: 20000 });
+  assert.ok(dropped >= 3, 'the first calls really failed');
+  assert.ok(!(await wp.isHidden('#dashBody')), 'the dashboard came up once the network did');
+  assert.deepStrictEqual(toasts.filter((t) => /חיבור|קליטה/.test(t)), [], 'no connection message for a network that was only slow to wake');
+  // a real problem on the server is named, not dressed up as "no connection"
+  await wake.unroute('**/api');
+  await wake.route('**/api', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: false, retry: true, error: 'החיבור לגוגל נכשל: invalid_grant' }) }));
+  await wp.click('#refreshBtn');
+  await wp.waitForSelector('#toast.show:has-text("invalid_grant")', { timeout: 10000 });
+  await wake.close();
 
   await browser.close();
   assert.deepStrictEqual(errors, [], errors.join('\n'));

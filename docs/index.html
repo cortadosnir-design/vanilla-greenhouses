@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>חממות וניל</title>
-  <meta name="theme-color" content="#f3f5f2" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0d110f" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f2f3f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="חממות וניל">
   <link rel="manifest" href="manifest.webmanifest">
@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=1794077939">
+  <link rel="stylesheet" href="styles.css?v=1794200000">
 </head>
 <body>
 
@@ -81,12 +81,16 @@
 <div id="app" hidden>
   <nav class="tabs" aria-label="ניווט ראשי">
     <button type="button" data-tab="dash" id="dashTab">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>
       <span>דשבורד</span>
     </button>
     <button type="button" data-tab="report" aria-current="page">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 21c-4-3-7-6.5-7-10.5C5 6.4 8 3 12 3s7 3.4 7 7.5c0 4-3 7.5-7 10.5z"/><path d="M12 7v5l3 2"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21c-4-3-7-6.5-7-10.5C5 6.4 8 3 12 3s7 3.4 7 7.5c0 4-3 7.5-7 10.5z"/><path d="M12 7v5l3 2"/></svg>
       <span>עבודה</span>
+    </button>
+    <button type="button" data-tab="day">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+      <span>היום שלי</span>
     </button>
     <button type="button" data-tab="issue">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
@@ -95,7 +99,7 @@
   </nav>
 
   <main>
-    <!-- ===== report ===== -->
+    <!-- ===== work: pick, enter, leave ===== -->
     <section id="report" class="view">
       <header class="bar">
         <h1>עבודה</h1>
@@ -104,8 +108,8 @@
       <div id="pending" class="pending" hidden></div>
       <div id="wxStrip" class="wx-strip" hidden></div>
 
-      <div id="idle" class="stack">
-        <div id="ghSeg" class="seg" role="radiogroup" aria-label="חממה"></div>
+      <div id="idle" class="pick">
+        <div id="ghSeg" class="seg gh-seg" role="radiogroup" aria-label="חממה"></div>
         <div id="workTiles" class="tiles" role="radiogroup" aria-label="עבודה"></div>
         <div id="workMore" class="group" hidden><select id="workSel" aria-label="עבודה"></select></div>
       </div>
@@ -119,82 +123,71 @@
         </div>
       </div>
 
-      <!-- the greenhouse: entry and exit side by side -->
-      <div class="pair big-pair">
-        <button type="button" id="inBtn" class="btn primary big" disabled>כניסה לחממה</button>
-        <button type="button" id="outBtn" class="btn danger big" disabled>יציאה מהחממה</button>
-      </div>
-
-      <div id="active" class="stack" hidden>
-        <div class="group">
-          <div id="qtyRow" class="field qty" hidden><span id="qtyUnit"></span>
-            <div class="stepper"><button type="button" data-step="-1" aria-label="פחות אחד">−</button><input id="qty" type="number" inputmode="decimal" min="0" step="any" aria-labelledby="qtyUnit"><button type="button" data-step="1" aria-label="עוד אחד">+</button><button type="button" data-step="10" aria-label="עוד עשרה">+10</button></div></div>
-          <textarea id="notes" rows="3" placeholder="הערות" aria-label="הערות"></textarea>
-          <label class="photo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
-            <span id="camLabel">צילום בחממה</span>
-            <input id="camInput" type="file" accept="image/*" multiple>
-          </label>
+      <div id="active" class="visit" hidden>
+        <div id="qtyRow" class="group field qty" hidden><span id="qtyUnit"></span>
+          <div class="stepper"><button type="button" data-step="-1" aria-label="פחות אחד">−</button><input id="qty" type="number" inputmode="decimal" min="0" step="any" aria-labelledby="qtyUnit"><button type="button" data-step="1" aria-label="עוד אחד">+</button><button type="button" data-step="10" aria-label="עוד עשרה">+10</button></div></div>
+        <div class="group notes"><textarea id="notes" placeholder="הערות" aria-label="הערות"></textarea></div>
+        <div class="group cam">
+          <label class="photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="camLabel">צילום בחממה</span><input id="camInput" type="file" accept="image/*" multiple></label>
           <div id="camThumbs" class="thumbs" hidden></div>
         </div>
       </div>
 
-      <section id="myTasks" class="day card" aria-labelledby="myTasksTitle" hidden>
-        <div class="day-head"><h2 id="myTasksTitle">משימות קרובות</h2></div>
-        <ul id="myTasksList" class="list"></ul>
-      </section>
+      <div class="pair big-pair">
+        <button type="button" id="inBtn" class="btn primary big" disabled>כניסה לחממה</button>
+        <button type="button" id="outBtn" class="btn danger big" disabled>יציאה מהחממה</button>
+      </div>
+    </section>
 
-      <details id="dayBox" class="day card">
-        <summary class="day-head"><h2 id="dayTitle">היום שלי</h2><span id="daySum" class="sub"></span></summary>
-        <ol id="dayList" class="timeline"></ol>
-      </details>
-      <button type="button" id="installBtn" class="btn install" hidden>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
-        התקנה בטלפון
-      </button>
-      <button type="button" id="signOutBtn" class="btn plain sign-out" hidden></button>
+    <!-- ===== my day: what I did and what is coming ===== -->
+    <section id="day" class="view" hidden>
+      <header class="bar"><h1 id="dayTitle">היום שלי</h1><span id="daySum" class="sub"></span></header>
+      <div class="deck" data-fit="deck">
+        <section id="dayBox" class="card grow" aria-labelledby="dayHead">
+          <div class="card-head"><h2 id="dayHead">מה עשיתי היום</h2></div>
+          <ol id="dayList" class="timeline" data-fit></ol>
+        </section>
+        <section id="myTasks" class="card grow" aria-labelledby="myTasksTitle" hidden>
+          <div class="card-head"><h2 id="myTasksTitle">משימות קרובות</h2></div>
+          <ul id="myTasksList" class="list" data-fit></ul>
+        </section>
+      </div>
+      <div class="foot-row">
+        <button type="button" id="installBtn" class="btn" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
+          התקנה בטלפון
+        </button>
+        <button type="button" id="signOutBtn" class="btn plain sign-out" hidden></button>
+      </div>
     </section>
 
     <!-- ===== issue ===== -->
-    <section id="issue" class="view stack" hidden>
+    <section id="issue" class="view" hidden>
       <header class="bar"><h1>דיווח על בעיה</h1></header>
-      <div id="issueGh" class="seg" role="radiogroup" aria-label="חממה"></div>
-      <div id="issueCat" class="chips" role="radiogroup" aria-label="קטגוריה"></div>
-      <div id="issueSev" class="seg" role="radiogroup" aria-label="חומרה"></div>
-      <div class="group">
-        <textarea id="issueDesc" rows="4" placeholder="מה ראית?" aria-label="תיאור הבעיה"></textarea>
+      <div class="issue-form">
+        <div id="issueGh" class="seg gh-seg" role="radiogroup" aria-label="חממה"></div>
+        <div id="issueCat" class="chips" role="radiogroup" aria-label="קטגוריה"></div>
+        <div id="issueSev" class="seg sev-seg" role="radiogroup" aria-label="חומרה"></div>
+        <div class="group desc"><textarea id="issueDesc" placeholder="מה ראית?" aria-label="תיאור הבעיה"></textarea></div>
       </div>
       <button type="button" id="issueBtn" class="btn primary big" disabled>שליחת הבעיה</button>
     </section>
 
-    <!-- ===== dashboard ===== -->
+    <!-- ===== dashboard: one pane at a time, each one a single screen ===== -->
     <section id="dash" class="view wide" hidden>
-      <header class="bar"><h1>דשבורד</h1><span id="syncState" class="sync" aria-live="polite"></span></header>
-
-      <p id="mgrNo" class="empty" hidden>הדשבורד פתוח למנהלים בלבד</p>
-      <form id="mgrForm" class="stack" hidden autocomplete="off" style="max-width:360px">
-        <div class="group"><label class="field"><input id="mgrCode" type="password" autocapitalize="off" spellcheck="false" placeholder="קוד מנהל" aria-label="קוד מנהל" required></label></div>
-        <p id="mgrErr" class="error" role="alert"></p>
-        <button class="btn primary big" type="submit">פתיחת הדשבורד</button>
-      </form>
-
-      <div id="dashBody" hidden>
-        <div id="paneSeg" class="seg pane-seg" role="radiogroup" aria-label="תצוגה">
-          <button type="button" role="radio" data-pane="today">היום</button>
-          <button type="button" role="radio" data-pane="gh">חממות</button>
-          <button type="button" role="radio" data-pane="log">יומן</button>
-          <button type="button" role="radio" data-pane="photos">תמונות</button>
-        </div>
-        <div class="toolbar">
-          <div id="rangeSeg" class="seg" role="radiogroup" aria-label="טווח תאריכים">
-            <button type="button" role="radio" data-range="7">שבוע</button>
-            <button type="button" role="radio" data-range="30">חודש</button>
-            <button type="button" role="radio" data-range="365">שנה</button>
-            <button type="button" role="radio" data-range="all">הכול</button>
-          </div>
-          <button type="button" id="tasksBtn" class="btn primary">עבודות עתידיות <span id="tasksCount" class="count" hidden></span></button>
+      <header class="bar">
+        <h1>דשבורד</h1>
+        <span id="syncState" class="sync" aria-live="polite"></span>
+        <div class="bar-actions">
+          <button type="button" id="tasksBtn" class="icon-btn" aria-label="עבודות עתידיות">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+            <span id="tasksCount" class="badge" hidden></span>
+          </button>
+          <button type="button" id="refreshBtn" class="icon-btn" aria-label="רענון">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
           <details class="more">
-            <summary class="btn">עוד</summary>
+            <summary class="icon-btn" aria-label="עוד"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg></summary>
             <div class="menu">
               <button type="button" id="xlsBtn" class="btn plain">ייצוא ל-Excel</button>
               <button type="button" id="gsBtn" class="btn plain">דוח Google Sheets</button>
@@ -203,72 +196,85 @@
               <button type="button" id="usersBtn" class="btn plain">הרשאות</button>
             </div>
           </details>
-          <button type="button" id="refreshBtn" class="btn plain" aria-label="רענון">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg>
-          </button>
+        </div>
+      </header>
+
+      <p id="mgrNo" class="empty" hidden>הדשבורד פתוח למנהלים בלבד</p>
+      <form id="mgrForm" class="mgr-form" hidden autocomplete="off">
+        <div class="group"><label class="field"><input id="mgrCode" type="password" autocapitalize="off" spellcheck="false" placeholder="קוד מנהל" aria-label="קוד מנהל" required></label></div>
+        <p id="mgrErr" class="error" role="alert"></p>
+        <button class="btn primary big" type="submit">פתיחת הדשבורד</button>
+      </form>
+      <div id="dashWait" class="wait" hidden></div>
+
+      <div id="dashBody" hidden>
+        <div id="paneSeg" class="seg pane-seg" role="radiogroup" aria-label="תצוגה">
+          <button type="button" role="radio" data-pane="today">היום</button>
+          <button type="button" role="radio" data-pane="gh">חממות</button>
+          <button type="button" role="radio" data-pane="log">יומן</button>
+          <button type="button" role="radio" data-pane="charts">גרפים</button>
+          <button type="button" role="radio" data-pane="photos">תמונות</button>
+          <button type="button" role="radio" data-pane="wx">תחזית</button>
+        </div>
+        <div id="rangeSeg" class="seg range-seg" role="radiogroup" aria-label="טווח תאריכים">
+          <button type="button" role="radio" data-range="7">שבוע</button>
+          <button type="button" role="radio" data-range="30">חודש</button>
+          <button type="button" role="radio" data-range="365">שנה</button>
+          <button type="button" role="radio" data-range="all">הכול</button>
         </div>
 
-        <p id="sysLine" class="sys" data-in="today"></p>
-        <div id="nowCard" class="now" aria-live="polite" data-in="today"></div>
-        <section id="kpis" class="kpis" aria-label="סיכום הטווח" data-in="today"></section>
-        <div id="ghCards" class="ghs" data-in="gh"></div>
+        <div id="deck" class="deck" data-fit="deck">
+          <div id="nowCard" class="now" aria-live="polite" data-in="today"></div>
+          <section id="kpis" class="kpis" aria-label="סיכום הטווח" data-in="today"></section>
+          <p id="sysLine" class="sys" data-in="today"></p>
+          <article class="card grow" data-in="today"><div class="card-head"><h2>מה מתעכב</h2><span id="dueCount" class="pill late" hidden></span></div><ul id="dueList" class="list" data-fit></ul></article>
+          <article class="card grow" data-in="today"><div class="card-head"><h2>בעיות</h2></div><ul id="issueList" class="list" data-fit></ul></article>
 
-        <div class="dash-grid">
-          <article class="card span-2 journey-card" data-in="gh">
-            <div class="card-head"><h2>מסלול הוניל</h2><span class="sub">מהאבקה לקטיף, 8 עד 9 חודשים</span></div>
+          <div id="ghCards" class="ghs contents" data-in="gh"></div>
+          <article class="card journey-card" data-in="gh">
+            <div class="card-head"><h2>מסלול הוניל</h2></div>
             <div id="journey" class="journey"></div>
           </article>
-          <article class="card span-2" data-in="log">
-            <div class="card-head"><h2>שעות וביקורים</h2><div id="chartLegend" class="legend"></div></div>
+          <article class="card" data-in="gh">
+            <div class="card-head"><h2>השוואה בין חממות</h2></div>
+            <table class="compare">
+              <thead><tr><th>חממה</th><th class="last">טיפול אחרון</th><th>שעות</th><th>ביקורים</th><th>פרחים</th><th>תרמילים</th><th>בעיות</th></tr></thead>
+              <tbody id="compareBody"></tbody>
+            </table>
+          </article>
+
+          <article class="card grow" data-in="log">
+            <div class="card-head"><h2>יומן עבודה</h2>
+              <div class="filters">
+                <select id="fGh" aria-label="סינון לפי חממה"></select>
+                <select id="fWorker" aria-label="סינון לפי עובד"></select>
+              </div>
+            </div>
+            <ul id="logBody" class="list log" data-fit></ul>
+          </article>
+
+          <article class="card" data-in="charts">
+            <div class="card-head"><h2>שעות בחממות</h2><div id="chartLegend" class="legend"></div></div>
             <div id="hoursChart" class="chart"></div>
+          </article>
+          <article class="card" data-in="charts">
+            <div class="card-head"><h2>שעות לפי עבודה</h2></div>
             <div id="workBars" class="bars"></div>
           </article>
-          <article class="card" data-in="today"><div class="card-head"><h2>מה מתעכב</h2><span id="dueCount" class="pill late" hidden></span></div><ul id="dueList" class="list"></ul></article>
-          <article class="card" data-in="today"><h2>בעיות</h2><ul id="issueList" class="list"></ul></article>
-          <article class="card span-2 wx-card" id="wxCard" aria-label="מזג אוויר בשניר" data-in="today" hidden></article>
-          <article class="card span-2" data-in="log">
-            <div class="card-head"><h2>מזג האוויר מול העבודה</h2><span class="sub">טמפרטורה בשניר וביקורים בכל יום</span></div>
+          <article class="card" data-in="charts">
+            <div class="card-head"><h2>מזג האוויר מול העבודה</h2></div>
             <div id="wxHistory" class="chart"></div>
           </article>
-          <article class="card span-2" data-in="photos">
-            <div class="card-head"><h2>גלריה</h2><div id="galGh" class="seg small" role="radiogroup" aria-label="חממה"></div></div>
-            <div id="gallery" class="gallery"></div>
-            <details class="upload-box">
-              <summary>העלאת תמונות</summary>
-              <div class="upload stack">
-                <div id="upGh" class="seg" role="radiogroup" aria-label="חממה"></div>
-                <div class="group">
-                  <input id="upNote" class="note" type="text" placeholder="הערה" aria-label="הערה">
-                  <label class="photo">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
-                    <span id="upPhotoLabel">הוספת תמונות</span>
-                    <input id="upPhoto" type="file" accept="image/*" multiple>
-                  </label>
-                  <div id="upThumbs" class="thumbs" hidden></div>
-                </div>
-                <button type="button" id="upBtn" class="btn primary" disabled>העלאת תמונות</button>
-              </div>
-            </details>
-          </article>
-          <article class="card span-2" data-in="gh">
-            <h2>השוואה בין חממות</h2>
-            <div class="table-wrap"><table class="compare">
-              <thead><tr><th>חממה</th><th>תאריך אחרון</th><th>שעות</th><th>ביקורים</th><th>פרחים הואבקו</th><th>תרמילים</th><th>בעיות חדשות</th></tr></thead>
-              <tbody id="compareBody"></tbody>
-            </table></div>
-            <p id="compareNote" class="sub" style="margin:10px 0 0"></p>
-          </article>
-          <article class="card span-2" data-in="log">
-            <h2>יומן עבודה</h2>
-            <div class="filters">
-              <select id="fGh" aria-label="סינון לפי חממה"></select>
-              <select id="fWorker" aria-label="סינון לפי עובד"></select>
+
+          <article class="card grow" data-in="photos">
+            <div class="card-head"><h2>גלריה</h2>
+              <button type="button" id="upOpen" class="icon-btn tint" aria-label="העלאת תמונות"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
             </div>
-            <div class="table-wrap"><table>
-              <thead><tr><th>תאריך</th><th>עובד</th><th>חממה</th><th>עבודה</th><th>שעות</th><th>כמות</th><th>תמונה</th><th aria-label="עריכה"></th></tr></thead>
-              <tbody id="logBody"></tbody>
-            </table></div>
+            <div id="galGh" class="seg small" role="radiogroup" aria-label="חממה"></div>
+            <div id="gallery" class="gallery" data-fit></div>
           </article>
+
+          <article class="card wx-card" id="wxCard" aria-label="מזג אוויר בשניר" data-in="wx" hidden></article>
         </div>
       </div>
     </section>
@@ -277,13 +283,13 @@
 
 <dialog id="whoDlg" aria-labelledby="whoTitle">
   <div class="sheet-head"><h2 id="whoTitle">מי מדווח?</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
-  <div class="sheet-body"><ul id="whoList" class="list"></ul></div>
+  <div class="sheet-body"><ul id="whoList" class="list" data-fit></ul></div>
 </dialog>
 
 <dialog id="resolveDlg" aria-labelledby="resolveTitle">
   <div class="sheet-head"><h2 id="resolveTitle"></h2><button type="button" class="btn plain" data-close>ביטול</button></div>
-  <div class="sheet-body stack">
-    <p id="resolveDesc" style="margin:0"></p>
+  <div class="sheet-body">
+    <p id="resolveDesc" class="desc-line"></p>
     <div id="resolveSeg" class="seg" role="radiogroup" aria-label="סטטוס">
       <button type="button" role="radio" data-status="פתוח">פתוח</button>
       <button type="button" role="radio" data-status="בטיפול">בטיפול</button>
@@ -296,8 +302,8 @@
 
 <dialog id="tasksDlg" aria-labelledby="tasksTitle">
   <div class="sheet-head"><h2 id="tasksTitle">עבודות עתידיות</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
-  <div class="sheet-body stack">
-    <div id="tGh" class="seg" role="radiogroup" aria-label="חממה"></div>
+  <div class="sheet-body">
+    <div id="tGh" class="seg gh-seg" role="radiogroup" aria-label="חממה"></div>
     <div class="group">
       <select id="tWork" aria-label="משימה"></select>
       <input id="tText" class="note" type="text" placeholder="או משימה אחרת" aria-label="משימה אחרת">
@@ -305,14 +311,14 @@
       <select id="tWorker" aria-label="עובד"></select>
     </div>
     <button type="button" id="tAdd" class="btn primary big" disabled>הוספת משימה</button>
-    <ul id="tList" class="list"></ul>
+    <ul id="tList" class="list" data-fit></ul>
   </div>
 </dialog>
 
 <dialog id="usersDlg" aria-labelledby="usersTitle">
   <div class="sheet-head"><h2 id="usersTitle">הרשאות</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
-  <div class="sheet-body stack">
-    <form id="uForm" class="stack" autocomplete="off">
+  <div class="sheet-body">
+    <form id="uForm" class="sheet-form" autocomplete="off">
       <div class="group">
         <input id="uEmail" class="note" type="email" dir="ltr" placeholder="name@gmail.com" aria-label="מייל של חשבון Google" required>
         <input id="uName" class="note" type="text" maxlength="40" placeholder="שם, כמו שיופיע בגיליון" aria-label="שם" required>
@@ -320,17 +326,30 @@
       <div id="uRole" class="seg" role="radiogroup" aria-label="תפקיד"></div>
       <button type="submit" id="uAdd" class="btn primary big">הוספה</button>
     </form>
-    <ul id="uList" class="list"></ul>
+    <ul id="uList" class="list" data-fit></ul>
+  </div>
+</dialog>
+
+<dialog id="uploadDlg" aria-labelledby="uploadTitle">
+  <div class="sheet-head"><h2 id="uploadTitle">העלאת תמונות</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
+  <div class="sheet-body">
+    <div id="upGh" class="seg gh-seg" role="radiogroup" aria-label="חממה"></div>
+    <div class="group">
+      <input id="upNote" class="note" type="text" placeholder="הערה" aria-label="הערה">
+      <label class="photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a2 2 0 012-2h2l2-2h6l2 2h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="upPhotoLabel">הוספת תמונות</span><input id="upPhoto" type="file" accept="image/*" multiple></label>
+    </div>
+    <div id="upThumbs" class="thumbs grid" data-fit hidden></div>
+    <button type="button" id="upBtn" class="btn primary big" disabled>העלאת תמונות</button>
   </div>
 </dialog>
 
 <dialog id="installDlg" aria-labelledby="installTitle">
   <div class="sheet-head"><h2 id="installTitle">התקנה במסך הבית</h2><button type="button" class="btn plain" data-close>סגירה</button></div>
-  <div class="sheet-body stack">
+  <div class="sheet-body">
     <ol class="steps">
-      <li>לוחצים על כפתור השיתוף בסרגל הדפדפן (ריבוע עם חץ למעלה).</li>
-      <li>גוללים ובוחרים "הוספה למסך הבית".</li>
-      <li>לוחצים "הוספה". האייקון יופיע בין האפליקציות.</li>
+      <li>לוחצים על כפתור השיתוף בסרגל הדפדפן.</li>
+      <li>בוחרים "הוספה למסך הבית".</li>
+      <li>לוחצים "הוספה".</li>
     </ol>
   </div>
 </dialog>
@@ -343,16 +362,16 @@
 
 <dialog id="editDlg" aria-labelledby="editTitle">
   <div class="sheet-head"><h2 id="editTitle"></h2><button type="button" class="btn plain" data-close>ביטול</button></div>
-  <div class="sheet-body stack">
+  <div class="sheet-body">
     <div id="eTimes" class="group">
       <label class="field"><span>כניסה</span><input id="eStart" type="time"></label>
       <label class="field" id="eEndRow"><span>יציאה</span><input id="eEnd" type="time"></label>
     </div>
     <div class="group">
       <label id="eQtyRow" class="field"><span id="eQtyUnit">כמות</span><input id="eQty" type="number" inputmode="decimal" min="0" step="any"></label>
-      <textarea id="eNotes" rows="3" placeholder="הערות" aria-label="הערות"></textarea>
+      <textarea id="eNotes" rows="2" placeholder="הערות" aria-label="הערות"></textarea>
     </div>
-    <div id="ePhotos" class="thumbs edit-photos"></div>
+    <div id="ePhotos" class="thumbs grid edit-photos" data-fit></div>
     <button type="button" id="eSave" class="btn primary big">שמירה</button>
     <button type="button" id="eDelete" class="btn plain danger">מחיקת הרשומה</button>
   </div>
@@ -362,13 +381,14 @@
 <div id="qrSheet" aria-hidden="true"></div>
 
 <script src="https://accounts.google.com/gsi/client" async onload="window.onGsi && onGsi()"></script>
-<script src="config.js?v=1794077939"></script>
+<script src="config.js?v=1794200000"></script>
 <script>
   // ?demo turns on a self-contained demo (no server); it is remembered until ?demo=off
   (function () { try { var q = location.search; if (/[?&]demo=off/.test(q)) localStorage.removeItem('vg.demo'); else if (/[?&]demo/.test(q)) localStorage.setItem('vg.demo', '1'); if (localStorage.getItem('vg.demo')) document.write('<script src="demo.js"><\/script>'); } catch (e) {} })();
 </script>
-<script src="logic.js?v=1794077939"></script>
-<script src="weather.js?v=1794077939"></script>
-<script src="app.js?v=1794077939"></script>
+<script src="fit.js?v=1794200000"></script>
+<script src="logic.js?v=1794200000"></script>
+<script src="weather.js?v=1794200000"></script>
+<script src="app.js?v=1794200000"></script>
 </body>
 </html>
