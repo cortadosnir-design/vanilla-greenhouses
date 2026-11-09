@@ -262,6 +262,13 @@
   };
 
   // ---------- tabs ----------
+  // once the farm picture scrolls away, the bar's buttons turn from clear glass to frosted and its title appears
+  function barState() {
+    const hero = document.querySelector('.view:not([hidden]) .hero');
+    document.documentElement.classList.toggle('scrolled', !!hero && hero.getBoundingClientRect().bottom < 110);
+  }
+  addEventListener('scroll', barState, { passive: true });
+  addEventListener('resize', barState);
   function showTab(name) {
     const apply = () => {
       document.querySelectorAll('.tabs button').forEach((b) => (b.dataset.tab === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
@@ -269,7 +276,7 @@
       window.scrollTo(0, 0);
     };
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (document.startViewTransition && !reduce) document.startViewTransition(apply); else apply();
+    if (document.startViewTransition && !reduce) document.startViewTransition(apply).updateCallbackDone.then(barState); else { apply(); barState(); }
     if (name === 'dash') openDash();
     if (name === 'issue') renderIssue();
   }
@@ -622,25 +629,6 @@
     state.range = b.dataset.range;
     store.set('range', state.range);
     renderDash();
-  };
-
-  // one pane of the dashboard at a time, remembered on this phone
-  let pane = store.get('pane', 'today');
-  const PANES = ['today', 'gh', 'log', 'charts', 'photos', 'wx'];
-  if (!PANES.includes(pane)) pane = 'today';
-  function showPane() {
-    $('dashBody').dataset.pane = pane;
-    setChecked($('paneSeg'), 'pane', pane);
-    if (window.FIT) FIT.first($('deck'));
-  }
-  showPane();
-  $('paneSeg').onclick = (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    pane = b.dataset.pane;
-    store.set('pane', pane);
-    showPane();
-    renderDash(); // charts are drawn at the width they now have
   };
 
   function rangeRows() {

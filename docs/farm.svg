@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" preserveAspectRatio="xMidYMax slice">
+  <!-- the picture behind every screen's title: the farm's tunnel greenhouses under the sky -->
+  <defs>
+    <linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5e9fcf"/><stop offset="1" stop-color="#cfe6ef"/></linearGradient>
+  </defs>
+  <rect width="1200" height="400" fill="url(#s)"/>
+  <circle cx="430" cy="150" r="26" fill="#ffe7a3"/>
+  <path d="M0 240c120-34 240-40 380-20s260 10 400-16 300-14 420 6v190H0z" fill="#6fa77f"/>
+  <path d="M0 290c140-24 300-22 450-6s250 6 400-8 240-6 350 4v120H0z" fill="#4f8a5c"/>
+  <g fill="#eef6f1" fill-opacity=".74" stroke="#fff" stroke-width="1.6">
+    <path d="M70 332v-44a95 50 0 0 1 190 0v44z"/>
+    <path d="M300 332v-52a110 58 0 0 1 220 0v52z"/>
+    <path d="M560 332v-58a130 64 0 0 1 260 0v58z"/>
+    <path d="M860 332v-50a105 56 0 0 1 210 0v50z"/>
+    <path d="M1100 332v-42a90 48 0 0 1 180 0v42z"/>
+  </g>
+  <g stroke="#9cc4a8" stroke-width="1.3" fill="none">
+    <path d="M118 332v-74M165 332v-82M212 332v-74M355 332v-86M410 332v-98M465 332v-86M625 332v-96M690 332v-112M755 332v-96M912 332v-84M965 332v-96M1018 332v-84M1145 332v-70M1190 332v-82"/>
+  </g>
+  <rect y="332" width="1200" height="68" fill="#35683f"/>
+  <path d="M0 352h1200" stroke="#2c5935" stroke-width="2"/>
+</svg>

@@ -31,21 +31,11 @@ async function pickWork(p, code) {
   await p.selectOption('#workSel', code);
 }
 
-// nothing scrolls: a row on another page is brought to its page first, the way a person would page to it
-const reveal = (p, sel) => p.locator(sel).first().evaluate((el) => window.FIT.reveal(el));
-async function tap(p, sel) { await reveal(p, sel); await p.click(sel); }
-// no page, card list or sheet ever scrolls, down or sideways
+// pages scroll down like an iPhone app, never sideways
+async function tap(p, sel) { await p.click(sel); }
 async function noScroll(p, where) {
-  const bad = await p.evaluate(() => {
-    const de = document.documentElement, out = [];
-    if (de.scrollHeight > innerHeight + 1 || de.scrollWidth > innerWidth + 1) out.push('page ' + de.scrollWidth + 'x' + de.scrollHeight);
-    document.querySelectorAll('*').forEach((el) => {
-      const s = getComputedStyle(el);
-      if (/(auto|scroll)/.test(s.overflowY + s.overflowX) && el.getClientRects().length && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) out.push(el.id || el.className);
-    });
-    return out;
-  });
-  assert.deepStrictEqual(bad, [], where + ' scrolls: ' + bad.join(', '));
+  const w = await p.evaluate(() => [document.documentElement.scrollWidth, innerWidth]);
+  assert.ok(w[0] <= w[1] + 1, where + ' scrolls sideways: ' + w.join('/'));
 }
 
 // the real gate is Google only; the tests sign in with the mock server's codes through the demo's code form
@@ -246,9 +236,8 @@ async function skipIntro(p) {
   await page.fill('#mgrCode', '9876');
   await page.click('#mgrForm button[type=submit]');
   await page.waitForSelector('#dashBody:not([hidden])');
-  // the dashboard opens on "today": who is in, the numbers, what is late, problems, weather
-  assert.strictEqual(await page.getAttribute('#dashBody', 'data-pane'), 'today');
-  assert.ok(await page.isHidden('#ghCards'), 'one pane at a time');
+  // the dashboard is one page, most urgent first: who is in, the numbers, what is late, problems, then the rest
+  assert.ok(await page.isVisible('#ghCards'), 'every section on one page');
   assert.ok((await page.textContent('#dueList')).includes('חממה'), 'due list has items');
   await page.waitForSelector('#wxCard:not([hidden])', { state: 'attached' });
   assert.ok((await page.$$('#wxCard .wx-day')).length === 7, '7 forecast days');
@@ -257,7 +246,6 @@ async function skipIntro(p) {
   assert.ok((await page.textContent('#nowCard')).length > 3, 'who is in the greenhouse now');
   await page.screenshot({ path: path.join(SHOTS, '07-dash-phone.png') });
   await noScroll(page, 'dashboard today');
-  await page.click('#paneSeg button[data-pane=gh]');
   await page.waitForSelector('#ghCards .gh');
   assert.strictEqual((await page.$$('#ghCards .gh')).length, 3);
   assert.ok((await page.$$('#compareBody tr')).length === 3, 'comparison rows');
@@ -265,13 +253,10 @@ async function skipIntro(p) {
   assert.ok((await page.$$('#compareBody .delta')).length >= 15, 'comparison deltas');
   await page.screenshot({ path: path.join(SHOTS, '07a-dash-gh.png') });
   await noScroll(page, 'dashboard greenhouses');
-  await page.click('#paneSeg button[data-pane=charts]');
   await page.waitForSelector('#hoursChart svg rect.b', { state: 'attached' });
   await page.waitForSelector('#wxHistory svg polyline.hi', { state: 'attached' });
   await noScroll(page, 'dashboard charts');
-  await page.click('#paneSeg button[data-pane=wx]');
   await noScroll(page, 'dashboard forecast');
-  await page.click('#paneSeg button[data-pane=photos]');
   await page.waitForSelector('#gallery button');
   assert.match(await page.getAttribute('#gallery button', 'data-cap'), /לחות 72%/, "each photo carries that day's weather");
   await noScroll(page, 'dashboard photos');
@@ -281,7 +266,6 @@ async function skipIntro(p) {
   await page.click('#rangeSeg button[data-range="30"]');
   assert.ok((await page.textContent('#issueList')).includes('אקריות'));
   assert.ok((await page.$$('#logBody li')).length >= 5);
-  await page.click('#paneSeg button[data-pane=log]');
   await noScroll(page, 'dashboard log');
   // delete a record from the work log: two taps, and it is gone from the dashboard (marked in the sheet)
   const logRows = (await page.$$('#logBody li')).length;
@@ -332,7 +316,6 @@ async function skipIntro(p) {
   // manager photo upload: up to 20, attached to a greenhouse and date
   const png = path.join(__dirname, '..', 'docs', 'icons', 'icon-512.png');
   const png2 = path.join(__dirname, '..', 'docs', 'icons', 'icon-180.png');
-  await page.click('#paneSeg button[data-pane=photos]');
   await page.click('#upOpen');
   await page.waitForSelector('#uploadDlg[open]');
   assert.ok(await page.isDisabled('#upBtn'), 'upload disabled without photos');
@@ -362,7 +345,6 @@ async function skipIntro(p) {
   await page.click('#lightbox [data-close]');
 
   // resolve an issue
-  await page.click('#paneSeg button[data-pane=today]');
   await tap(page, '#issueList button[data-id]');
   await page.waitForSelector('#resolveDlg[open]');
   await page.click('#resolveSeg button[data-status=טופל]');
@@ -425,7 +407,6 @@ async function skipIntro(p) {
   assert.match(await gp.textContent('#signOutBtn'), /מנהל/);
   await gp.waitForSelector('#nowCard .main');
   assert.ok(await gp.isHidden('#mgrForm'), 'a manager opens straight on the dashboard, without a code');
-  await gp.click('#paneSeg button[data-pane=gh]');
   await gp.waitForSelector('#ghCards .gh');
   assert.match(await gp.textContent('#ghCards .gh .facts'), /90 צמחים.*50 מ"ר.*3 שורות.*נטיעה 2023/, 'Master Data on the greenhouse card');
   assert.strictEqual(await gp.getAttribute('.tabs button:first-child', 'data-tab'), 'dash', 'the dashboard is the first tab');
